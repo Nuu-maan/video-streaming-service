@@ -1,0 +1,111 @@
+package templates
+
+import (
+	"github.com/orchids/video-streaming/internal/domain"
+	"fmt"
+)
+
+templ VideoPlayerPage(video *domain.Video) {
+	@Layout(video.Title) {
+		<div class="max-w-5xl mx-auto">
+			<div class="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl overflow-hidden border border-purple-500/30">
+				<div class="aspect-video bg-gradient-to-br from-purple-900/50 to-pink-900/50 flex items-center justify-center">
+					<div class="text-center">
+						<svg class="mx-auto h-24 w-24 text-white/30 mb-4" fill="currentColor" viewBox="0 0 20 20">
+							<path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"/>
+						</svg>
+						<p class="text-white/50 text-sm">Video player will be added in Phase 3</p>
+						<p class="text-white/30 text-xs mt-2">HLS streaming coming soon</p>
+					</div>
+				</div>
+				
+				<div class="p-8">
+					<div class="flex justify-between items-start mb-6">
+						<div>
+							<h1 class="text-3xl font-bold text-white mb-2">
+								{ video.Title }
+							</h1>
+							@StatusBadge(video.Status)
+						</div>
+						<a 
+							href="/videos"
+							class="text-purple-400 hover:text-purple-300 transition text-sm font-medium"
+						>
+							← Back to Videos
+						</a>
+					</div>
+					
+					if video.Description != nil && *video.Description != "" {
+						<div class="mb-6">
+							<h3 class="text-sm font-medium text-gray-400 mb-2">Description</h3>
+							<p class="text-gray-200">{ *video.Description }</p>
+						</div>
+					}
+					
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+						if video.Duration != nil {
+							<div>
+								<h3 class="text-sm font-medium text-gray-400 mb-1">Duration</h3>
+								<p class="text-white font-semibold">{ fmt.Sprintf("%.1f seconds", *video.Duration) }</p>
+							</div>
+						}
+						
+						if video.OriginalResolution != nil {
+							<div>
+								<h3 class="text-sm font-medium text-gray-400 mb-1">Resolution</h3>
+								<p class="text-white font-semibold">{ *video.OriginalResolution }</p>
+							</div>
+						}
+						
+						<div>
+							<h3 class="text-sm font-medium text-gray-400 mb-1">File Size</h3>
+							<p class="text-white font-semibold">{ formatFileSize(video.FileSize) }</p>
+						</div>
+						
+						<div>
+							<h3 class="text-sm font-medium text-gray-400 mb-1">Uploaded</h3>
+							<p class="text-white font-semibold">{ video.CreatedAt.Format("Jan 2, 2006") }</p>
+						</div>
+					</div>
+					
+					if video.Status == domain.StatusProcessing {
+						<div class="bg-yellow-600/20 border border-yellow-500/30 rounded-lg p-4">
+							<div class="flex items-center">
+								<svg class="animate-spin h-5 w-5 text-yellow-400 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+								</svg>
+								<div>
+									<p class="text-yellow-200 font-medium">Processing video...</p>
+									if video.TranscodingProgress != nil {
+										<p class="text-yellow-300 text-sm">Progress: { fmt.Sprintf("%d%%", *video.TranscodingProgress) }</p>
+									}
+								</div>
+							</div>
+						</div>
+					}
+					
+					if video.Status == domain.StatusFailed {
+						<div class="bg-red-600/20 border border-red-500/30 rounded-lg p-4">
+							<p class="text-red-200 font-medium">Video processing failed</p>
+							<p class="text-red-300 text-sm mt-1">Please try uploading again</p>
+						</div>
+					}
+				</div>
+			</div>
+		</div>
+	}
+}
+
+func formatFileSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}

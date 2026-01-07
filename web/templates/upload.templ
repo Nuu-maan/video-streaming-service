@@ -1,0 +1,125 @@
+package templates
+
+import (
+	"github.com/orchids/video-streaming/internal/domain"
+	"fmt"
+)
+
+templ UploadPage() {
+	@Layout("Upload Video") {
+		<div class="max-w-3xl mx-auto">
+			<div class="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-8 border border-purple-500/30">
+				<h2 class="text-3xl font-bold text-white mb-6">Upload Your Video</h2>
+				
+				<form 
+					id="upload-form"
+					hx-post="/api/videos/upload" 
+					hx-encoding="multipart/form-data"
+					hx-target="#upload-result"
+					hx-indicator="#upload-progress"
+					class="space-y-6"
+				>
+					<div>
+						<label for="title" class="block text-sm font-medium text-gray-200 mb-2">
+							Video Title *
+						</label>
+						<input 
+							type="text" 
+							id="title" 
+							name="title" 
+							required
+							maxlength="255"
+							class="w-full px-4 py-3 bg-black/30 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+							placeholder="Enter a descriptive title"
+						/>
+					</div>
+					
+					<div>
+						<label for="description" class="block text-sm font-medium text-gray-200 mb-2">
+							Description (Optional)
+						</label>
+						<textarea 
+							id="description" 
+							name="description" 
+							rows="4"
+							maxlength="5000"
+							class="w-full px-4 py-3 bg-black/30 border border-purple-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition resize-none"
+							placeholder="Add a description for your video"
+						></textarea>
+					</div>
+					
+					<div>
+						<label for="video" class="block text-sm font-medium text-gray-200 mb-2">
+							Video File *
+						</label>
+						<div class="relative">
+							<input 
+								type="file" 
+								id="video" 
+								name="video" 
+								accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm"
+								required
+								class="w-full px-4 py-3 bg-black/30 border border-purple-500/30 rounded-lg text-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-700 file:cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
+							/>
+						</div>
+						<p class="mt-2 text-xs text-gray-400">
+							Supported formats: MP4, MOV, AVI, MKV, WebM (Max 500MB)
+						</p>
+					</div>
+					
+					<div id="upload-progress" class="htmx-indicator">
+						<div class="bg-purple-600/20 rounded-lg p-4 border border-purple-500/30">
+							<div class="flex items-center">
+								<svg class="animate-spin h-5 w-5 text-purple-400 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+								</svg>
+								<span class="text-purple-200 font-medium">Uploading your video...</span>
+							</div>
+						</div>
+					</div>
+					
+					<button 
+						type="submit"
+						class="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold py-3 px-6 rounded-lg hover:from-purple-700 hover:to-pink-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 transition transform hover:scale-[1.02] active:scale-[0.98]"
+					>
+						Upload Video
+					</button>
+				</form>
+				
+				<div id="upload-result" class="mt-6"></div>
+			</div>
+		</div>
+	}
+}
+
+templ UploadSuccess(video *domain.Video) {
+	<div class="bg-green-600/20 border border-green-500/30 rounded-lg p-6 animate-fade-in">
+		<div class="flex items-start">
+			<svg class="h-6 w-6 text-green-400 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+			</svg>
+			<div class="ml-3 flex-1">
+				<h3 class="text-lg font-medium text-green-200">Upload Successful!</h3>
+				<div class="mt-2 text-sm text-green-300">
+					<p><strong>Title:</strong> { video.Title }</p>
+					<p><strong>ID:</strong> { video.ID.String() }</p>
+					if video.Duration != nil {
+						<p><strong>Duration:</strong> { fmt.Sprintf("%.1f seconds", *video.Duration) }</p>
+					}
+					if video.OriginalResolution != nil {
+						<p><strong>Resolution:</strong> { *video.OriginalResolution }</p>
+					}
+				</div>
+				<div class="mt-4">
+					<a href="/videos" class="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium">
+						View All Videos
+					</a>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script>
+		document.getElementById('upload-form').reset();
+	</script>
+}
