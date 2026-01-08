@@ -7,53 +7,116 @@ import (
 
 templ VideoPlayerPage(video *domain.Video) {
 	@Layout(video.Title) {
-		<div class="max-w-5xl mx-auto">
+		<link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet"/>
+		<script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
+		
+		<div class="max-w-6xl mx-auto">
 			<div class="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl overflow-hidden border border-purple-500/30">
-				<div class="aspect-video bg-gradient-to-br from-purple-900/50 to-pink-900/50 flex items-center justify-center">
-					<div class="text-center">
-						<svg class="mx-auto h-24 w-24 text-white/30 mb-4" fill="currentColor" viewBox="0 0 20 20">
-							<path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"/>
-						</svg>
-						<p class="text-white/50 text-sm">Video player will be added in Phase 3</p>
-						<p class="text-white/30 text-xs mt-2">HLS streaming coming soon</p>
-					</div>
+				<div class="bg-black">
+					if video.Status == domain.VideoStatusReady && video.HLSReady {
+						<video
+							id="video-player"
+							class="video-js vjs-big-play-centered"
+							controls
+							preload="auto"
+							width="1280"
+							height="720"
+							data-setup='{}'
+							style="width: 100%; height: auto;"
+						>
+							<source src={ fmt.Sprintf("/api/videos/%s/hls/master.m3u8", video.ID.String()) } type="application/x-mpegURL"/>
+							<p class="vjs-no-js text-white p-4">
+								To view this video please enable JavaScript, and consider upgrading to a
+								web browser that supports HTML5 video
+							</p>
+						</video>
+					} else if video.Status == domain.VideoStatusReady && len(video.AvailableQualities) > 0 {
+						<video
+							id="video-player"
+							class="video-js vjs-big-play-centered"
+							controls
+							preload="auto"
+							width="1280"
+							height="720"
+							data-setup='{}'
+							style="width: 100%; height: auto;"
+						>
+							<source src={ fmt.Sprintf("/api/videos/%s/stream/720p", video.ID.String()) } type="video/mp4"/>
+							<p class="vjs-no-js text-white p-4">
+								To view this video please enable JavaScript
+							</p>
+						</video>
+					} else {
+						<div class="aspect-video bg-gradient-to-br from-purple-900/50 to-pink-900/50 flex items-center justify-center">
+							<div class="text-center p-8">
+								<svg class="mx-auto h-24 w-24 text-white/30 mb-4" fill="currentColor" viewBox="0 0 20 20">
+									<path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"/>
+								</svg>
+								if video.Status == domain.VideoStatusProcessing {
+									<p class="text-white/70 text-lg mb-2">Video is processing...</p>
+									<p class="text-white/50 text-sm">Please wait while we prepare your video for streaming</p>
+								} else if video.Status == domain.VideoStatusFailed {
+									<p class="text-white/70 text-lg mb-2">Video processing failed</p>
+									<p class="text-white/50 text-sm">Please try uploading again</p>
+								} else {
+									<p class="text-white/70 text-lg mb-2">Video not yet ready</p>
+									<p class="text-white/50 text-sm">The video is being prepared for streaming</p>
+								}
+							</div>
+						</div>
+					}
 				</div>
 				
 				<div class="p-8">
 					<div class="flex justify-between items-start mb-6">
-						<div>
-							<h1 class="text-3xl font-bold text-white mb-2">
+						<div class="flex-1">
+							<h1 class="text-3xl font-bold text-white mb-3">
 								{ video.Title }
 							</h1>
-							@StatusBadge(video.Status)
+							<div class="flex items-center gap-3">
+								@StatusBadge(video.Status)
+								if video.HLSReady {
+									<span class="text-xs bg-green-500/20 text-green-300 px-3 py-1 rounded-full border border-green-500/30">
+										HLS Enabled
+									</span>
+								}
+								if len(video.AvailableQualities) > 0 {
+									<span class="text-xs bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full border border-blue-500/30">
+										{ fmt.Sprintf("%d Qualities", len(video.AvailableQualities)) }
+									</span>
+								}
+							</div>
 						</div>
 						<a 
 							href="/videos"
-							class="text-purple-400 hover:text-purple-300 transition text-sm font-medium"
+							class="text-purple-400 hover:text-purple-300 transition text-sm font-medium flex items-center gap-2"
 						>
-							← Back to Videos
+							<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+								<path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"/>
+							</svg>
+							Back to Videos
 						</a>
 					</div>
 					
-					if video.Description != nil && *video.Description != "" {
+					if video.Description != "" {
 						<div class="mb-6">
 							<h3 class="text-sm font-medium text-gray-400 mb-2">Description</h3>
-							<p class="text-gray-200">{ *video.Description }</p>
+							<p class="text-gray-200">{ video.Description }</p>
 						</div>
 					}
 					
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
-						if video.Duration != nil {
+						if video.Duration > 0 {
 							<div>
 								<h3 class="text-sm font-medium text-gray-400 mb-1">Duration</h3>
-								<p class="text-white font-semibold">{ fmt.Sprintf("%.1f seconds", *video.Duration) }</p>
+								<p class="text-white font-semibold">{ formatDuration(video.Duration) }</p>
 							</div>
 						}
 						
-						if video.OriginalResolution != nil {
+						if video.OriginalResolution != "" {
 							<div>
 								<h3 class="text-sm font-medium text-gray-400 mb-1">Resolution</h3>
-								<p class="text-white font-semibold">{ *video.OriginalResolution }</p>
+								<p class="text-white font-semibold">{ video.OriginalResolution }</p>
 							</div>
 						}
 						
@@ -68,7 +131,20 @@ templ VideoPlayerPage(video *domain.Video) {
 						</div>
 					</div>
 					
-					if video.Status == domain.StatusProcessing {
+					if len(video.AvailableQualities) > 0 {
+						<div class="mb-6">
+							<h3 class="text-sm font-medium text-gray-400 mb-2">Available Qualities</h3>
+							<div class="flex flex-wrap gap-2">
+								for _, quality := range video.AvailableQualities {
+									<span class="text-sm bg-purple-500/20 text-purple-300 px-3 py-1 rounded-full border border-purple-500/30">
+										{ quality }
+									</span>
+								}
+							</div>
+						</div>
+					}
+					
+					if video.Status == domain.VideoStatusProcessing {
 						<div class="bg-yellow-600/20 border border-yellow-500/30 rounded-lg p-4">
 							<div class="flex items-center">
 								<svg class="animate-spin h-5 w-5 text-yellow-400 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -77,15 +153,15 @@ templ VideoPlayerPage(video *domain.Video) {
 								</svg>
 								<div>
 									<p class="text-yellow-200 font-medium">Processing video...</p>
-									if video.TranscodingProgress != nil {
-										<p class="text-yellow-300 text-sm">Progress: { fmt.Sprintf("%d%%", *video.TranscodingProgress) }</p>
+									if video.TranscodingProgress > 0 {
+										<p class="text-yellow-300 text-sm">Progress: { fmt.Sprintf("%d%%", video.TranscodingProgress) }</p>
 									}
 								</div>
 							</div>
 						</div>
 					}
 					
-					if video.Status == domain.StatusFailed {
+					if video.Status == domain.VideoStatusFailed {
 						<div class="bg-red-600/20 border border-red-500/30 rounded-lg p-4">
 							<p class="text-red-200 font-medium">Video processing failed</p>
 							<p class="text-red-300 text-sm mt-1">Please try uploading again</p>
@@ -94,6 +170,55 @@ templ VideoPlayerPage(video *domain.Video) {
 				</div>
 			</div>
 		</div>
+		
+		if video.Status == domain.VideoStatusReady {
+			<script>
+				(function() {
+					const player = videojs('video-player', {
+						controls: true,
+						autoplay: false,
+						preload: 'auto',
+						fluid: true,
+						playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
+						controlBar: {
+							volumePanel: {
+								inline: false
+							}
+						}
+					});
+
+					player.on('loadedmetadata', function() {
+						console.log('Video loaded, duration:', player.duration());
+					});
+
+					player.on('error', function(e) {
+						const error = player.error();
+						console.error('Playback error:', error);
+						
+						if (error && error.code === 4) {
+							console.log('HLS not supported, trying MP4 fallback...');
+							const videoId = window.location.pathname.split('/').pop();
+							player.src({
+								src: `/api/videos/${videoId}/stream/720p`,
+								type: 'video/mp4'
+							});
+						}
+					});
+
+					player.on('play', function() {
+						console.log('Video started playing');
+					});
+
+					player.on('pause', function() {
+						console.log('Video paused');
+					});
+
+					player.on('ended', function() {
+						console.log('Video ended');
+					});
+				})();
+			</script>
+		}
 	}
 }
 
@@ -108,4 +233,18 @@ func formatFileSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func formatDuration(seconds int) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%d sec", seconds)
+	}
+	minutes := seconds / 60
+	remainingSeconds := seconds % 60
+	if minutes < 60 {
+		return fmt.Sprintf("%d:%02d", minutes, remainingSeconds)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	return fmt.Sprintf("%d:%02d:%02d", hours, remainingMinutes, remainingSeconds)
 }

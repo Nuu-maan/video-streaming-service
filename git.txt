@@ -1,16 +1,84 @@
-git add .air.toml ; git commit -m "chore: configure Air for hot reload during development"
-git add .env.example ; git commit -m "chore: add environment variable template with worker and FFmpeg configuration"
-git add .gitignore ; git commit -m "chore: add gitignore for Go project with common exclusions"
-git add README.md ; git commit -m "docs: add comprehensive README with project overview and setup instructions"
-git add cmd\worker\main.go ; git commit -m "feat: create background worker binary for processing video transcoding jobs"
-git add git.txt ; git commit -m "chore: add git commands reference for structured commits"
-git add internal\handler\admin_handler.go ; git commit -m "feat: add admin endpoints for retry, queue stats, and worker monitoring"
-git add internal\service\transcoding_service.go ; git commit -m "feat: implement video transcoding service with multi-quality FFmpeg processing"
-git add queries\* ; git commit -m "feat: add SQLC queries for type-safe database operations"
-git add sqlc.yaml ; git commit -m "chore: configure SQLC for database code generation"
-git add web\templates\layout_templ.go ; git commit -m "feat: generate layout template with base HTML structure"
-git add web\templates\upload_templ.go ; git commit -m "feat: generate upload page template with HTMX file upload"
-git add web\templates\video_list_templ.go ; git commit -m "feat: generate video list template with grid display"
-git add web\templates\video_player_templ.go ; git commit -m "feat: generate video player template with quality selector"
-git add .orchids\* ; git commit -m "chore: add Orchids project configuration and metadata"
-git add node_modules\* ; git commit -m "chore: add node dependencies for frontend tooling"
+# Git Commands for Video Streaming Platform - Professional Commit Messages
+
+# Core Domain & Response Package
+git add pkg/response/response.go && git commit -m "feat(response): implement standardized API response utilities with error handling"
+
+# Database Migrations - Initial Schema
+git add migrations/000001_create_videos_table.up.sql migrations/000001_create_videos_table.down.sql && git commit -m "feat(db): add initial video table schema with status tracking"
+
+# Database Migrations - HLS Support
+git add migrations/000002_add_hls_support.up.sql migrations/000002_add_hls_support.down.sql && git commit -m "feat(db): add HLS streaming support columns to videos table"
+
+# Domain Layer
+git add internal/domain/video.go internal/domain/errors.go && git commit -m "feat(domain): implement video entity with status lifecycle and error definitions"
+
+# Repository Layer
+git add internal/repository/interfaces.go internal/repository/postgres/video_repository.go && git commit -m "feat(repository): implement PostgreSQL video repository with HLS support"
+
+# Configuration
+git add internal/config/config.go && git commit -m "feat(config): add application configuration with database and storage settings"
+
+# Core Services
+git add internal/service/ffmpeg_service.go && git commit -m "feat(service): implement FFmpeg service for video metadata extraction"
+
+git add internal/service/upload_service.go && git commit -m "feat(service): implement video upload service with validation and persistence"
+
+git add internal/service/transcoding_service.go && git commit -m "feat(service): implement video transcoding service with HLS adaptive streaming support"
+
+# Queue System
+git add internal/queue/client.go internal/queue/tasks.go internal/queue/handlers.go && git commit -m "feat(queue): implement Redis-based job queue for asynchronous video processing"
+
+# HTTP Handlers
+git add internal/handler/upload_handler.go && git commit -m "feat(api): add video upload endpoints with multipart form handling"
+
+git add internal/handler/page_handler.go && git commit -m "feat(api): implement page rendering handlers for video listing and player"
+
+git add internal/handler/admin_handler.go && git commit -m "feat(api): add admin endpoints for video retry and queue management"
+
+git add internal/handler/streaming_handler.go && git commit -m "feat(api): implement HLS streaming endpoints with Redis caching and quality playlists"
+
+# API Server
+git add cmd/api/main.go && git commit -m "feat(server): bootstrap HTTP server with routing, middleware, and handler registration"
+
+# Worker Process
+git add cmd/worker/main.go && git commit -m "feat(worker): implement background worker for video transcoding job processing"
+
+# Utilities
+git add pkg/logger/logger.go && git commit -m "feat(utils): add structured logging utility with context support"
+
+git add pkg/validator/validator.go && git commit -m "feat(utils): implement request validation utilities for API handlers"
+
+# Templates - UI Components
+git add web/templates/layout_templ.go && git commit -m "feat(ui): add base layout template with responsive design"
+
+git add web/templates/upload_templ.go && git commit -m "feat(ui): implement video upload page with drag-and-drop support"
+
+git add web/templates/video_list_templ.go && git commit -m "feat(ui): add video gallery page with status badges and filtering"
+
+git add web/templates/video_player_templ.go && git commit -m "feat(ui): implement Video.js player with HLS adaptive streaming and quality selector"
+
+# Infrastructure
+git add docker-compose.yml && git commit -m "chore(docker): configure PostgreSQL and Redis services for local development"
+
+git add sqlc.yaml && git commit -m "chore(db): configure SQLC for type-safe SQL query generation"
+
+# Build Configuration
+git add Makefile && git commit -m "chore(build): add comprehensive Makefile with dev, build, test, and migration commands"
+
+# Dependencies
+git add go.mod go.sum && git commit -m "chore(deps): initialize Go module with required dependencies"
+
+# Documentation
+git add README.md && git commit -m "docs: add comprehensive project documentation with setup instructions"
+
+# Environment Configuration
+git add .env.example && git commit -m "chore(config): add environment variables template with HLS configuration"
+
+# Git Configuration
+git add .gitignore && git commit -m "chore(git): configure gitignore to exclude build artifacts and .orchids directory"
+
+# Database Queries
+git add queries/videos.sql && git commit -m "feat(db): add SQLC query definitions for video CRUD operations"
+
+# Final Comprehensive Commit
+git add . && git commit -m "feat: complete Phase 4 HLS adaptive streaming implementation with Video.js player, Redis caching, and quality selector"
