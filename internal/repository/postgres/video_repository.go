@@ -57,7 +57,8 @@ func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*d
 	query := `
 		SELECT id, title, description, filename, file_path, file_size, mime_type,
 			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, created_at, updated_at, processed_at
+			   transcoding_progress, available_qualities, hls_master_path, hls_ready, streaming_protocol,
+			   created_at, updated_at, processed_at
 		FROM videos
 		WHERE id = $1
 	`
@@ -77,6 +78,9 @@ func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*d
 		&video.Status,
 		&video.TranscodingProgress,
 		&video.AvailableQualities,
+		&video.HLSMasterPath,
+		&video.HLSReady,
+		&video.StreamingProtocol,
 		&video.CreatedAt,
 		&video.UpdatedAt,
 		&video.ProcessedAt,
@@ -96,7 +100,8 @@ func (r *PostgresVideoRepository) List(ctx context.Context, limit, offset int) (
 	query := `
 		SELECT id, title, description, filename, file_path, file_size, mime_type,
 			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, created_at, updated_at, processed_at
+			   transcoding_progress, available_qualities, hls_master_path, hls_ready, streaming_protocol,
+			   created_at, updated_at, processed_at
 		FROM videos
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -125,6 +130,9 @@ func (r *PostgresVideoRepository) List(ctx context.Context, limit, offset int) (
 			&video.Status,
 			&video.TranscodingProgress,
 			&video.AvailableQualities,
+			&video.HLSMasterPath,
+			&video.HLSReady,
+			&video.StreamingProtocol,
 			&video.CreatedAt,
 			&video.UpdatedAt,
 			&video.ProcessedAt,
@@ -360,6 +368,25 @@ func (r *PostgresVideoRepository) MarkAsFailed(ctx context.Context, id uuid.UUID
 	result, err := r.pool.Exec(ctx, query, domain.VideoStatusFailed, id)
 	if err != nil {
 		return fmt.Errorf("failed to mark as failed: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return domain.ErrVideoNotFound
+	}
+
+	return nil
+}
+
+func (r *PostgresVideoRepository) UpdateHLSInfo(ctx context.Context, id uuid.UUID, hlsMasterPath string, hlsReady bool) error {
+	query := `
+		UPDATE videos
+		SET hls_master_path = $1, hls_ready = $2, streaming_protocol = $3, updated_at = NOW()
+		WHERE id = $4
+	`
+
+	result, err := r.pool.Exec(ctx, query, hlsMasterPath, hlsReady, "hls", id)
+	if err != nil {
+		return fmt.Errorf("failed to update HLS info: %w", err)
 	}
 
 	if result.RowsAffected() == 0 {

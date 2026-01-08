@@ -20,4 +20,5 @@ type VideoRepository interface {
 	Search(ctx context.Context, query string, limit, offset int) ([]*domain.Video, error)
 	UpdateDuration(ctx context.Context, id uuid.UUID, duration int) error
 	UpdateResolution(ctx context.Context, id uuid.UUID, resolution string) error
+	UpdateHLSInfo(ctx context.Context, id uuid.UUID, hlsMasterPath string, hlsReady bool) error
 }
