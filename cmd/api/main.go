@@ -58,6 +58,7 @@ func main() {
 	uploadHandler := handler.NewUploadHandler(uploadService, videoRepo, queueClient, log, cfg)
 	pageHandler := handler.NewPageHandler(videoRepo, log)
 	adminHandler := handler.NewAdminHandler(videoRepo, queueClient, cfg.Redis.Address(), log)
+	streamingHandler := handler.NewStreamingHandler(videoRepo, redisClient, cfg, log)
 
 	if cfg.Server.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -123,6 +124,11 @@ func main() {
 		api.GET("/videos/:id", uploadHandler.GetVideo)
 		api.GET("/videos/:id/status", uploadHandler.GetVideoStatus)
 		api.DELETE("/videos/:id", uploadHandler.DeleteVideo)
+		
+		api.GET("/videos/:id/hls/master.m3u8", streamingHandler.ServeMasterPlaylist)
+		api.GET("/videos/:id/hls/:quality/playlist.m3u8", streamingHandler.ServeQualityPlaylist)
+		api.GET("/videos/:id/hls/:quality/:segment", streamingHandler.ServeSegment)
+		api.GET("/videos/:id/stream/:quality", streamingHandler.ServeMP4Fallback)
 	}
 
 	admin := router.Group("/api/admin")
@@ -130,6 +136,7 @@ func main() {
 		admin.POST("/videos/:id/retry", adminHandler.RetryVideo)
 		admin.GET("/queue/stats", adminHandler.GetQueueStats)
 		admin.GET("/workers", adminHandler.ListActiveWorkers)
+		admin.DELETE("/videos/:id/cache", streamingHandler.ClearPlaylistCache)
 	}
 
 	srv := &http.Server{

@@ -30,6 +30,9 @@ type Video struct {
 	ThumbnailPath        *string
 	TranscodingProgress  int
 	AvailableQualities   []string
+	HLSMasterPath        *string
+	HLSReady             bool
+	StreamingProtocol    string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	ProcessedAt          *time.Time

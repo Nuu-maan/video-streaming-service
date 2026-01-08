@@ -152,7 +152,7 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	qualities := []string{"360p", "480p", "720p", "1080p"}
 	transcoded := []string{}
-	totalSteps := len(qualities) + 1
+	totalSteps := len(qualities) + 2
 
 	for i, quality := range qualities {
 		spec := qualitySpecs[quality]
@@ -198,7 +198,46 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 		return fmt.Errorf("failed to transcode any quality")
 	}
 
-	thumbnailProgress := int(float64(len(qualities)) / float64(totalSteps) * 100)
+	hlsProgress := int(float64(len(qualities)) / float64(totalSteps) * 100)
+	if err := s.videoRepo.UpdateProgress(ctx, id, hlsProgress); err != nil {
+		s.log.Error(ctx, "failed to update progress", map[string]interface{}{
+			"video_id": videoID,
+			"progress": hlsProgress,
+		})
+	}
+
+	hlsQualities := []string{}
+	for _, quality := range transcoded {
+		mp4Path := filepath.Join(outputDir, quality+".mp4")
+		if err := s.ConvertToHLS(ctx, videoID, quality, mp4Path); err != nil {
+			s.log.Error(ctx, "failed to convert to HLS", map[string]interface{}{
+				"video_id": videoID,
+				"quality":  quality,
+				"error":    err.Error(),
+			})
+			continue
+		}
+		hlsQualities = append(hlsQualities, quality)
+	}
+
+	if len(hlsQualities) > 0 {
+		if err := s.GenerateMasterPlaylist(ctx, videoID, hlsQualities); err != nil {
+			s.log.Error(ctx, "failed to generate master playlist", map[string]interface{}{
+				"video_id": videoID,
+				"error":    err.Error(),
+			})
+		} else {
+			hlsMasterPath := fmt.Sprintf("/uploads/processed/%s/hls/master.m3u8", videoID)
+			if err := s.videoRepo.UpdateHLSInfo(ctx, id, hlsMasterPath, true); err != nil {
+				s.log.Error(ctx, "failed to update HLS info", map[string]interface{}{
+					"video_id": videoID,
+					"error":    err.Error(),
+				})
+			}
+		}
+	}
+
+	thumbnailProgress := int(float64(len(qualities)+1) / float64(totalSteps) * 100)
 	if err := s.videoRepo.UpdateProgress(ctx, id, thumbnailProgress); err != nil {
 		s.log.Error(ctx, "failed to update progress", map[string]interface{}{
 			"video_id": videoID,
@@ -310,4 +349,125 @@ func (s *TranscodingService) ensureFFmpegPath() {
 			s.ffmpegPath = path
 		}
 	})
+}
+
+func (s *TranscodingService) ConvertToHLS(ctx context.Context, videoID, quality, mp4Path string) error {
+	s.ensureFFmpegPath()
+
+	hlsDir := filepath.Join(s.storage.TranscodedPath, videoID, "hls", quality)
+	if err := os.MkdirAll(hlsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create HLS directory: %w", err)
+	}
+
+	playlistPath := filepath.Join(hlsDir, "playlist.m3u8")
+	segmentPattern := filepath.Join(hlsDir, "segment_%03d.ts")
+
+	args := []string{
+		"-i", mp4Path,
+		"-c:v", "copy",
+		"-c:a", "copy",
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_playlist_type", "vod",
+		"-hls_segment_filename", segmentPattern,
+		"-hls_list_size", "0",
+		"-y",
+		playlistPath,
+	}
+
+	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded || ctx.Err() == context.Canceled {
+			return fmt.Errorf("HLS conversion cancelled or timed out")
+		}
+		
+		s.log.Error(ctx, "HLS conversion failed, retrying once", map[string]interface{}{
+			"video_id": videoID,
+			"quality":  quality,
+			"error":    err.Error(),
+			"output":   string(output),
+		})
+		
+		time.Sleep(2 * time.Second)
+		cmd = exec.CommandContext(ctx, s.ffmpegPath, args...)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("HLS conversion failed after retry: %w, output: %s", err, string(output))
+		}
+	}
+
+	segmentFiles, err := filepath.Glob(filepath.Join(hlsDir, "segment_*.ts"))
+	if err != nil {
+		return fmt.Errorf("failed to verify segments: %w", err)
+	}
+	if len(segmentFiles) == 0 {
+		return fmt.Errorf("no segments generated for quality %s", quality)
+	}
+
+	if _, err := os.Stat(playlistPath); os.IsNotExist(err) {
+		return fmt.Errorf("playlist file not created: %s", playlistPath)
+	}
+
+	s.log.Info(ctx, "HLS conversion successful", map[string]interface{}{
+		"video_id":       videoID,
+		"quality":        quality,
+		"segment_count":  len(segmentFiles),
+		"playlist_path":  playlistPath,
+	})
+
+	return nil
+}
+
+func (s *TranscodingService) GenerateMasterPlaylist(ctx context.Context, videoID string, qualities []string) error {
+	hlsBaseDir := filepath.Join(s.storage.TranscodedPath, videoID, "hls")
+	masterPath := filepath.Join(hlsBaseDir, "master.m3u8")
+
+	file, err := os.Create(masterPath)
+	if err != nil {
+		return fmt.Errorf("failed to create master playlist: %w", err)
+	}
+	defer file.Close()
+
+	fmt.Fprintln(file, "#EXTM3U")
+	fmt.Fprintln(file, "#EXT-X-VERSION:3")
+
+	bandwidthMap := map[string]int{
+		"360p":  800000,
+		"480p":  1400000,
+		"720p":  2800000,
+		"1080p": 5000000,
+	}
+
+	resolutionMap := map[string]string{
+		"360p":  "640x360",
+		"480p":  "854x480",
+		"720p":  "1280x720",
+		"1080p": "1920x1080",
+	}
+
+	for _, quality := range qualities {
+		playlistPath := filepath.Join(hlsBaseDir, quality, "playlist.m3u8")
+		if _, err := os.Stat(playlistPath); os.IsNotExist(err) {
+			s.log.Warn(ctx, "quality playlist not found, skipping", map[string]interface{}{
+				"video_id": videoID,
+				"quality":  quality,
+			})
+			continue
+		}
+
+		bandwidth := bandwidthMap[quality]
+		resolution := resolutionMap[quality]
+
+		fmt.Fprintf(file, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%s\n", bandwidth, resolution)
+		fmt.Fprintf(file, "%s/playlist.m3u8\n", quality)
+	}
+
+	s.log.Info(ctx, "master playlist generated", map[string]interface{}{
+		"video_id":   videoID,
+		"qualities":  qualities,
+		"master_path": masterPath,
+	})
+
+	return nil
 }

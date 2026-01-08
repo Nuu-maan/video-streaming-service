@@ -1,4 +1,4 @@
-.PHONY: help dev worker build build-worker test migrate-up migrate-down migrate-create sqlc templ docker-up docker-down clean install-tools run-all
+.PHONY: help dev worker build build-worker test migrate-up migrate-down migrate-create sqlc templ docker-up docker-down clean install-tools run-all test-player test-hls
 
 help:
 	@echo "Available commands:"
@@ -17,6 +17,8 @@ help:
 	@echo "  make docker-down   - Stop Docker services"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make install-tools - Install required tools"
+	@echo "  make test-player VIDEO_ID=xxx - Open video player in browser"
+	@echo "  make test-hls VIDEO_ID=xxx - Test HLS playback with ffplay"
 
 dev:
 	air
@@ -97,3 +99,20 @@ lint:
 fmt:
 	@go fmt ./...
 	@gofmt -s -w .
+
+test-player:
+ifndef VIDEO_ID
+	@echo "Error: VIDEO_ID is required. Usage: make test-player VIDEO_ID=your-video-id"
+	@exit 1
+endif
+	@echo "Opening video player for video $(VIDEO_ID)..."
+	@start http://localhost:8080/videos/$(VIDEO_ID)
+
+test-hls:
+ifndef VIDEO_ID
+	@echo "Error: VIDEO_ID is required. Usage: make test-hls VIDEO_ID=your-video-id"
+	@exit 1
+endif
+	@echo "Testing HLS playback for video $(VIDEO_ID)..."
+	@echo "Make sure ffplay (part of FFmpeg) is installed"
+	@ffplay -loglevel info http://localhost:8080/api/videos/$(VIDEO_ID)/hls/master.m3u8
