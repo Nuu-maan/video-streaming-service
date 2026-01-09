@@ -1,10 +1,29 @@
-# Video Streaming Service - Professional Foundation
+# Video Streaming Service
 
-A production-ready video streaming backend service built with Go, following Clean Architecture principles. This is Phase 1 - the foundation for a scalable video platform with PostgreSQL, Redis, and modern Go best practices.
+A production-ready video streaming backend built with Go, implementing HTTP Live Streaming (HLS) with adaptive bitrate switching and comprehensive video management. The service uses Clean Architecture principles with PostgreSQL, Redis, and FFmpeg for professional video processing.
 
-## 🎯 What We Built
+## Current Status
 
-This is a **professionally structured Go application** that follows industry standards and Clean Architecture. Think of it as the solid foundation of a house - everything is organized, tested, and ready for features to be added on top.
+The platform has completed four major development phases:
+
+**Phase 1: Core Infrastructure**
+Built the foundation with Clean Architecture, PostgreSQL database, Redis caching, structured logging, and configuration management. Established the repository pattern and service layer architecture.
+
+**Phase 2: Video Upload Pipeline**
+Implemented multipart file uploads with chunking support, input validation, file system management, metadata extraction, and temporary storage handling. Added comprehensive error handling and upload progress tracking.
+
+**Phase 3: Video Processing & Transcoding**
+Integrated FFmpeg for video transcoding with multiple quality outputs (360p, 480p, 720p, 1080p). Created background job processing using Asynq, thumbnail generation, and asynchronous task queues. Implemented process management and resource optimization.
+
+**Phase 4: HLS Adaptive Streaming**
+Added HTTP Live Streaming protocol support with master playlist generation, quality-specific playlists, and segment-based delivery. Implemented Video.js player with automatic quality switching, Redis playlist caching, and MP4 fallback for broader compatibility. CORS-enabled streaming with proper cache headers.
+
+**Phase 5: Authentication & Authorization (In Progress)**
+Building user management system with password hashing, session management, JWT tokens, and role-based access control. Database schema and security infrastructure completed. Remaining work includes auth service implementation, middleware, handlers, and OAuth integration.
+
+## What This Platform Does
+
+This is a professional-grade video streaming service that handles the complete video lifecycle from upload to delivery. Users can upload videos that get automatically processed into multiple quality levels, then streamed efficiently using industry-standard HLS protocol with adaptive bitrate switching.
 
 ## 🏗️ Architecture Overview
 
@@ -46,20 +65,38 @@ web/                 # Frontend assets
 - **Maintainability**: Changes in one layer don't break others
 - **Scalability**: Can swap implementations (e.g., PostgreSQL → MySQL)
 
-## 🚀 Tech Stack
+## Technology Stack
 
-| Technology | Purpose | Why? |
-|------------|---------|------|
-| **Go** | Backend language | Fast, compiled, great for APIs |
-| **Gin** | HTTP framework | Fastest Go web framework |
-| **PostgreSQL** | Main database | Reliable, ACID-compliant, full-featured |
-| **Redis** | Cache & sessions | Super fast in-memory data store |
-| **SQLC** | Type-safe SQL | Generates Go code from SQL queries |
-| **golang-migrate** | Database migrations | Version control for database schema |
-| **Air** | Hot reload | Auto-restart on code changes |
-| **Templ** | HTML templates | Type-safe templates (compile-time checks) |
-| **HTMX** | Dynamic UI | No JavaScript framework needed |
-| **Zerolog** | Structured logging | Fast, structured JSON logs |
+**Backend Framework**
+- Go 1.21+ for performance and concurrency
+- Gin web framework for HTTP routing
+- Clean Architecture for maintainability
+
+**Data Storage**
+- PostgreSQL for relational data with ACID guarantees
+- Redis for session management and caching
+- File system for video storage
+
+**Video Processing**
+- FFmpeg for transcoding and thumbnail generation
+- HLS protocol for adaptive streaming
+- Multiple quality outputs (360p to 1080p)
+
+**Background Jobs**
+- Asynq for distributed task queue
+- Worker processes for async video processing
+
+**Development Tools**
+- SQLC for type-safe SQL queries
+- Templ for HTML templates
+- Air for hot reload development
+- golang-migrate for database versioning
+- Zerolog for structured logging
+
+**Authentication** (Phase 5)
+- Bcrypt for password hashing
+- JWT for API tokens
+- Redis sessions for web authentication
 
 ## 📋 Prerequisites
 
@@ -147,283 +184,168 @@ make clean         # Remove build artifacts
 make install-tools # Install required tools
 ```
 
-## 📁 Project Structure Explained
+## Project Structure
 
-### Domain Layer (`internal/domain/`)
+The codebase follows Clean Architecture with clear separation of concerns:
 
-**Pure business logic** - no external dependencies.
+**Domain Layer** (`internal/domain/`)
+Core business entities and logic. Includes Video and User models with validation methods, error definitions, and role-based permission system.
 
-- `video.go`: Video entity with business methods
-  - `NewVideo()`: Creates a new video with validation
-  - `IsProcessing()`: Checks if video is being processed
-  - `MarkAsReady()`: Updates video status to ready
-  - `Validate()`: Business validation rules
+**Repository Layer** (`internal/repository/`)
+Database access using SQLC for type-safe queries. PostgreSQL implementations for videos and users with connection pooling and transaction support.
 
-- `errors.go`: Custom error types
-  - `ErrVideoNotFound`
-  - `ErrInvalidTitle`
-  - `ErrProcessingFailed`
+**Service Layer** (`internal/service/`)
+Business logic including upload handling, FFmpeg transcoding, session management, and password security with bcrypt hashing.
 
-### Repository Layer (`internal/repository/`)
+**Handler Layer** (`internal/handler/`)
+HTTP request handling with Gin framework. Includes upload endpoints, streaming API, admin functions, and page rendering.
 
-**Database access** - all SQL queries live here.
+**Queue Layer** (`internal/queue/`)
+Background job processing with Asynq for video transcoding and thumbnail generation.
 
-- `interfaces.go`: Defines contracts (interfaces)
-- `postgres/`: PostgreSQL implementation using SQLC
-  - Type-safe queries (no SQL injection)
-  - Connection pooling for performance
-  - Context support for timeouts
+**Configuration** (`internal/config/`)
+Environment-based settings for server, database, Redis, storage, and worker processes.
 
-### Configuration (`internal/config/`)
+**Utilities** (`pkg/`)
+Reusable packages for logging (zerolog), JWT tokens, password security, response formatting, and validation.
 
-**Environment management** - loads settings from `.env`
+## API Endpoints
 
-- Server config (host, port, timeouts)
-- Database config (connection pool settings)
-- Redis config
-- Storage config (file size limits, paths)
-- Worker config (concurrency limits)
+**Health & Monitoring**
+- GET `/health` - Service health check (database and Redis status)
+- GET `/metrics` - Performance and usage metrics
 
-### Logger (`pkg/logger/`)
+**Video Management**
+- GET `/api/v1/videos` - List all videos
+- GET `/api/v1/videos/:id` - Get specific video details
+- POST `/api/v1/videos/upload` - Upload new video
+- DELETE `/api/v1/videos/:id` - Delete video
 
-**Structured logging** with zerolog:
+**HLS Streaming**
+- GET `/api/videos/:id/hls/master.m3u8` - Master playlist with all quality levels
+- GET `/api/videos/:id/hls/:quality/playlist.m3u8` - Quality-specific playlist
+- GET `/api/videos/:id/hls/:quality/:segment` - Video segment delivery
+- GET `/api/videos/:id/stream/:quality` - MP4 fallback streaming
 
-- Pretty console output in development
-- JSON logs in production (for log aggregation)
-- Request ID tracking
-- Context-aware logging
+**Admin Operations**
+- DELETE `/api/admin/videos/:id/cache` - Clear playlist cache for video
 
-## 🔌 API Endpoints
+**Web Interface**
+- GET `/` - Video list page
+- GET `/upload` - Upload page
+- GET `/videos/:id` - Video player page
 
-### Health & Monitoring
+## Database Schema
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check (DB, Redis status) |
-| GET | `/metrics` | Service metrics |
+**Videos Table**
+Stores video metadata, processing status, and file references. Includes fields for HLS support (master playlist path, quality variants), transcoding progress, and status tracking (uploaded, processing, ready, failed).
 
-### Videos API (v1)
+**Users Table** (Phase 5)
+User accounts with authentication fields (password hash, email verification), profile data (username, bio, avatar), role-based permissions (user, premium, moderator, admin), and OAuth integration support.
 
-| Method | Path | Description | Status |
-|--------|------|-------------|--------|
-| GET | `/api/v1/videos` | List all videos | 🚧 Placeholder |
-| GET | `/api/v1/videos/:id` | Get video by ID | 🚧 Placeholder |
-| POST | `/api/v1/videos` | Upload new video | 🚧 Placeholder |
-| DELETE | `/api/v1/videos/:id` | Delete video | 🚧 Placeholder |
+**Key Features**
+- UUID primary keys
+- Automatic timestamp management
+- Full-text search on video titles and descriptions
+- Indexes on frequently queried fields
+- Foreign key relationships with cascade deletes
+- Check constraints for data validation
 
-## 🗄️ Database Schema
+## Environment Configuration
 
-### Videos Table
+Configuration is managed through `.env` file with these key settings:
 
-```sql
-CREATE TABLE videos (
-    id                   UUID PRIMARY KEY,
-    title                VARCHAR(255) NOT NULL,
-    description          TEXT,
-    filename             VARCHAR(500) NOT NULL,
-    file_path            VARCHAR(1000) NOT NULL,
-    file_size            BIGINT CHECK (file_size > 0),
-    duration             INTEGER DEFAULT 0,
-    status               video_status NOT NULL,
-    mime_type            VARCHAR(100) NOT NULL,
-    original_resolution  VARCHAR(50),
-    thumbnail_path       VARCHAR(1000),
-    transcoding_progress INTEGER CHECK (0-100),
-    available_qualities  TEXT[],
-    created_at           TIMESTAMP WITH TIME ZONE,
-    updated_at           TIMESTAMP WITH TIME ZONE,
-    processed_at         TIMESTAMP WITH TIME ZONE
-);
-```
+**Server Settings**
+- `SERVER_PORT` - HTTP port (default: 8080)
+- `ENVIRONMENT` - development or production mode
+- Timeout configurations for reads, writes, and graceful shutdown
 
-**Indexes** for performance:
-- `status` (for filtering by status)
-- `created_at` (for sorting by date)
-- Full-text search on `title` and `description`
+**Database**
+- PostgreSQL connection details (host, port, credentials)
+- Connection pool settings for performance optimization
+- Max open connections and idle connection limits
 
-**Automatic Triggers**:
-- `updated_at` automatically updates on every change
+**Redis**
+- Connection configuration for caching and sessions
+- Pool size and connection management
 
-## 🔐 Environment Variables
+**Storage**
+- Upload path for video files
+- Maximum file size limits (default: 2GB)
+- Paths for thumbnails and transcoded outputs
+- Allowed video formats
 
-All configuration is in `.env` file. Key settings:
+**Worker Configuration**
+- Concurrent job processing limits
+- Job timeout settings for transcoding operations
 
-```bash
-# Server
-SERVER_PORT=8080              # HTTP port
-ENVIRONMENT=development       # development/production
+**Logging**
+- Log level control (debug, info, warn, error)
+- Structured JSON output for production
 
-# Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=video_streaming
-DB_MAX_OPEN_CONNS=25         # Connection pool size
+## Testing
 
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# Storage
-STORAGE_MAX_FILE_SIZE=2GB    # Max upload size
-STORAGE_UPLOAD_PATH=./web/uploads
-
-# Logging
-LOG_LEVEL=info               # debug/info/warn/error
-```
-
-## 🧪 Testing
+Run tests with coverage analysis:
 
 ```bash
-# Run all tests with race detector
 make test
-
-# This generates:
-# - coverage.out (coverage data)
-# - coverage.html (visual coverage report)
 ```
 
-### Testing Approach
+This executes all tests with race detection and generates coverage reports (coverage.out and coverage.html). The testing approach includes unit tests for services with mocked dependencies, integration tests for repositories with real database connections, and handler tests for HTTP endpoints using httptest.
 
-- **Unit tests**: Services with mocked repositories
-- **Integration tests**: Repositories with real database
-- **Handler tests**: HTTP endpoints with httptest
+## Implementation Details
 
-## 🏭 Best Practices Implemented
+**Error Handling**
+Domain-specific errors propagate through layers and get translated to appropriate HTTP status codes at the handler level. Uses error wrapping for context preservation.
 
-### Error Handling
+**Context Usage**
+Every function accepts context.Context for proper cancellation, timeout handling, and request ID propagation across the application.
 
-```go
-// Service returns domain errors
-if video == nil {
-    return domain.ErrVideoNotFound
-}
+**Logging Pattern**
+Structured logging with contextual fields for debugging and monitoring. Request IDs track operations across services.
 
-// Handler translates to HTTP status
-if errors.Is(err, domain.ErrVideoNotFound) {
-    c.JSON(404, gin.H{"error": "Video not found"})
-}
-```
+**Dependency Injection**
+No global state. Dependencies passed as parameters to constructors, enabling easy testing and flexibility.
 
-### Context Usage
+**Production Readiness**
+- Clean Architecture for maintainable code
+- Configuration management following 12-factor principles
+- Graceful shutdown without dropping requests
+- Connection pooling for database and Redis
+- Health checks for load balancer integration
+- Type-safe SQL preventing injection attacks
+- Request ID tracking for distributed tracing
 
-Every function takes `context.Context` as first parameter:
-- Cancellation support
-- Timeout handling
-- Request ID propagation
+## Troubleshooting
 
-### Logging Pattern
+**Database Connection Issues**
+Start PostgreSQL with `make docker-up` and verify connection using `docker exec -it video_streaming_postgres psql -U postgres -d video_streaming`
 
-```go
-log.Info(ctx, "Video created", map[string]interface{}{
-    "video_id": video.ID,
-    "title": video.Title,
-})
-```
+**Migration Errors**
+Check migration status with migrate tool and use force command if needed to fix version conflicts.
 
-### Dependency Injection
+**Port Conflicts**
+Change SERVER_PORT in .env file or terminate the process using the port.
 
-No global variables (except config). Pass dependencies as parameters:
+**FFmpeg Not Found**
+Install FFmpeg and ensure it's in system PATH for video processing to work.
 
-```go
-type VideoService struct {
-    repo repository.VideoRepository
-    log  *logger.Logger
-}
+**Worker Not Processing Jobs**
+Verify Redis is running and check worker logs for errors. Ensure Asynq is properly configured.
 
-func NewVideoService(repo repository.VideoRepository, log *logger.Logger) *VideoService {
-    return &VideoService{repo: repo, log: log}
-}
-```
+## Next Development Phases
 
-## 🚦 Production Readiness Checklist
+**Phase 5 Completion**
+Finish authentication system with auth service, middleware implementation, HTTP handlers, HTMX templates, and OAuth integration.
 
-- ✅ Clean Architecture (maintainable, testable)
-- ✅ Configuration management (12-factor app)
-- ✅ Structured logging (for monitoring)
-- ✅ Database migrations (version control)
-- ✅ Connection pooling (performance)
-- ✅ Graceful shutdown (no dropped requests)
-- ✅ Health checks (for load balancers)
-- ✅ Request ID tracking (for debugging)
-- ✅ CORS support (for frontend)
-- ✅ Error handling (consistent responses)
-- ✅ Type-safe SQL (SQLC prevents SQL injection)
+**Future Enhancements**
+- Video analytics and view tracking
+- Comment system and social features
+- Content recommendation engine
+- CDN integration for global delivery
+- Live streaming capabilities
+- Advanced admin dashboard
 
-## 🎓 Learning Resources
+## License
 
-### Go Concepts Used
-
-- **Interfaces**: For dependency injection and mocking
-- **Context**: For cancellation and request scoping
-- **Channels**: For graceful shutdown
-- **Goroutines**: For concurrent server startup
-- **Struct embedding**: For middleware composition
-- **Error wrapping**: With `fmt.Errorf` and `%w`
-
-### Architecture Patterns
-
-- **Repository Pattern**: Abstracts data access
-- **Service Layer**: Contains business logic
-- **Middleware Pattern**: Request processing pipeline
-- **Factory Pattern**: `NewVideo()`, `NewService()`
-
-## 🔜 Next Steps (Phase 2)
-
-Now that the foundation is ready:
-
-1. **Video Upload Handler**: Multipart file upload
-2. **Service Layer**: Business logic for video operations
-3. **Video Processing Worker**: Transcoding with FFmpeg
-4. **Storage Service**: File system operations
-5. **Streaming Endpoints**: HLS/DASH video delivery
-6. **User Authentication**: JWT or session-based
-7. **Rate Limiting**: Prevent abuse
-8. **Video Analytics**: View counts, watch time
-
-## 🐛 Troubleshooting
-
-### Database Connection Failed
-
-```bash
-# Check if PostgreSQL is running
-make docker-up
-
-# Verify connection
-docker exec -it video_streaming_postgres psql -U postgres -d video_streaming
-```
-
-### Migration Errors
-
-```bash
-# Check migration status
-migrate -path migrations -database "postgres://..." version
-
-# Force fix version (if needed)
-migrate -path migrations -database "postgres://..." force VERSION
-```
-
-### Port Already in Use
-
-```bash
-# Change port in .env
-SERVER_PORT=8081
-
-# Or kill process using port
-# Windows: netstat -ano | findstr :8080
-# Linux/Mac: lsof -ti:8080 | xargs kill
-```
-
-## 📞 Support
-
-For questions or issues:
-1. Check this README thoroughly
-2. Review code comments
-3. Check existing issues/discussions
-
-## 📄 License
-
-This project is part of the Orchids video streaming tutorial series.
-
----
-
-**Built with ❤️ using Go and Clean Architecture principles**
+This project is part of the Orchids video streaming platform series.
