@@ -348,4 +348,4 @@ Finish authentication system with auth service, middleware implementation, HTTP 
 
 ## License
 
-This project is part of the Orchids video streaming platform series.
+MIT
