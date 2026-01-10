@@ -4,7 +4,7 @@ A production-ready video streaming backend built with Go, implementing HTTP Live
 
 ## Current Status
 
-The platform has completed four major development phases:
+The platform has completed six major development phases:
 
 **Phase 1: Core Infrastructure**
 Built the foundation with Clean Architecture, PostgreSQL database, Redis caching, structured logging, and configuration management. Established the repository pattern and service layer architecture.
@@ -18,8 +18,11 @@ Integrated FFmpeg for video transcoding with multiple quality outputs (360p, 480
 **Phase 4: HLS Adaptive Streaming**
 Added HTTP Live Streaming protocol support with master playlist generation, quality-specific playlists, and segment-based delivery. Implemented Video.js player with automatic quality switching, Redis playlist caching, and MP4 fallback for broader compatibility. CORS-enabled streaming with proper cache headers.
 
-**Phase 5: Authentication & Authorization (In Progress)**
-Building user management system with password hashing, session management, JWT tokens, and role-based access control. Database schema and security infrastructure completed. Remaining work includes auth service implementation, middleware, handlers, and OAuth integration.
+**Phase 5: Authentication & Authorization**
+Completed user management system with bcrypt password hashing, JWT tokens, session management, and role-based access control (user, premium, moderator, admin). Includes middleware for authentication, authorization, and rate limiting.
+
+**Phase 6: Admin Dashboard & System Monitoring**
+Implemented comprehensive admin dashboard with analytics tracking, content moderation system, audit logging, and system health monitoring. Features include real-time view tracking, content reports, user ban management, and performance metrics monitoring (CPU, memory, database, Redis, queue).
 
 ## What This Platform Does
 
@@ -65,7 +68,7 @@ web/                 # Frontend assets
 - **Maintainability**: Changes in one layer don't break others
 - **Scalability**: Can swap implementations (e.g., PostgreSQL → MySQL)
 
-## Technology Stack
+**Technology Stack**
 
 **Backend Framework**
 - Go 1.21+ for performance and concurrency
@@ -74,7 +77,7 @@ web/                 # Frontend assets
 
 **Data Storage**
 - PostgreSQL for relational data with ACID guarantees
-- Redis for session management and caching
+- Redis for session management, caching, and real-time view tracking
 - File system for video storage
 
 **Video Processing**
@@ -93,10 +96,17 @@ web/                 # Frontend assets
 - golang-migrate for database versioning
 - Zerolog for structured logging
 
-**Authentication** (Phase 5)
+**Authentication & Security**
 - Bcrypt for password hashing
 - JWT for API tokens
 - Redis sessions for web authentication
+- Role-based access control (RBAC)
+
+**Monitoring & Analytics**
+- gopsutil for system metrics (CPU, memory, disk)
+- Custom analytics tracking with Redis caching
+- Audit logging for admin actions
+- Content moderation system
 
 ## 📋 Prerequisites
 
@@ -189,16 +199,16 @@ make install-tools # Install required tools
 The codebase follows Clean Architecture with clear separation of concerns:
 
 **Domain Layer** (`internal/domain/`)
-Core business entities and logic. Includes Video and User models with validation methods, error definitions, and role-based permission system.
+Core business entities and logic. Includes Video, User, Analytics, Report, AuditLog, and System models with validation methods, error definitions, and role-based permission system.
 
 **Repository Layer** (`internal/repository/`)
-Database access using SQLC for type-safe queries. PostgreSQL implementations for videos and users with connection pooling and transaction support.
+Database access using SQLC for type-safe queries. PostgreSQL implementations for videos, users, analytics, content reports, and audit logs with connection pooling and transaction support.
 
 **Service Layer** (`internal/service/`)
-Business logic including upload handling, FFmpeg transcoding, session management, and password security with bcrypt hashing.
+Business logic including upload handling, FFmpeg transcoding, session management, password security with bcrypt hashing, analytics tracking, content moderation, audit logging, and system monitoring.
 
 **Handler Layer** (`internal/handler/`)
-HTTP request handling with Gin framework. Includes upload endpoints, streaming API, admin functions, and page rendering.
+HTTP request handling with Gin framework. Includes upload endpoints, streaming API, authentication, admin functions, moderation tools, and page rendering.
 
 **Queue Layer** (`internal/queue/`)
 Background job processing with Asynq for video transcoding and thumbnail generation.
@@ -235,13 +245,22 @@ Reusable packages for logging (zerolog), JWT tokens, password security, response
 - GET `/upload` - Upload page
 - GET `/videos/:id` - Video player page
 
-## Database Schema
+**Database Schema**
 
 **Videos Table**
 Stores video metadata, processing status, and file references. Includes fields for HLS support (master playlist path, quality variants), transcoding progress, and status tracking (uploaded, processing, ready, failed).
 
-**Users Table** (Phase 5)
-User accounts with authentication fields (password hash, email verification), profile data (username, bio, avatar), role-based permissions (user, premium, moderator, admin), and OAuth integration support.
+**Users Table**
+User accounts with authentication fields (password hash, email verification), profile data (username, bio, avatar), role-based permissions (user, premium, moderator, admin), ban management fields, and OAuth integration support.
+
+**Analytics Tables**
+- `video_views` - Real-time view tracking with user and timestamp data
+- `video_analytics` - Aggregated video performance metrics (total views, unique viewers, watch time)
+- `user_analytics` - User engagement metrics (uploads, views, activity patterns)
+
+**Moderation Tables**
+- `content_reports` - User-submitted content reports with status tracking (pending, reviewed, resolved)
+- `audit_logs` - Complete audit trail of admin actions with metadata
 
 **Key Features**
 - UUID primary keys
@@ -335,16 +354,17 @@ Verify Redis is running and check worker logs for errors. Ensure Asynq is proper
 
 ## Next Development Phases
 
-**Phase 5 Completion**
-Finish authentication system with auth service, middleware implementation, HTTP handlers, HTMX templates, and OAuth integration.
-
 **Future Enhancements**
-- Video analytics and view tracking
+- Admin dashboard UI templates (HTMX/Templ)
+- Admin API handlers with authentication middleware
+- Video analytics visualization
+- Content moderation queue interface
+- Advanced search and filtering
 - Comment system and social features
 - Content recommendation engine
 - CDN integration for global delivery
 - Live streaming capabilities
-- Advanced admin dashboard
+- Advanced notification system
 
 ## License
 
