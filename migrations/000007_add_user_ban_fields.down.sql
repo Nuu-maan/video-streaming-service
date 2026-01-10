@@ -1,0 +1,7 @@
+DROP INDEX IF EXISTS idx_users_is_banned;
+
+ALTER TABLE users DROP COLUMN IF EXISTS banned_by;
+ALTER TABLE users DROP COLUMN IF EXISTS banned_at;
+ALTER TABLE users DROP COLUMN IF EXISTS ban_expiry;
+ALTER TABLE users DROP COLUMN IF EXISTS ban_reason;
+ALTER TABLE users DROP COLUMN IF EXISTS is_banned;
