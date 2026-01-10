@@ -1,84 +1,69 @@
-# Git Commands for Video Streaming Platform - Professional Commit Messages
+# Git Commands for Phase 6 PR - Admin Dashboard & Monitoring
 
-# Core Domain & Response Package
-git add pkg/response/response.go && git commit -m "feat(response): implement standardized API response utilities with error handling"
+# Domain Models
+git add internal/domain/analytics.go
+git commit -m "feat(domain): add analytics domain models for dashboard stats and metrics"
 
-# Database Migrations - Initial Schema
-git add migrations/000001_create_videos_table.up.sql migrations/000001_create_videos_table.down.sql && git commit -m "feat(db): add initial video table schema with status tracking"
+git add internal/domain/report.go
+git commit -m "feat(domain): add content report domain model for moderation"
 
-# Database Migrations - HLS Support
-git add migrations/000002_add_hls_support.up.sql migrations/000002_add_hls_support.down.sql && git commit -m "feat(db): add HLS streaming support columns to videos table"
+git add internal/domain/audit_log.go
+git commit -m "feat(domain): add audit log domain model for tracking admin actions"
 
-# Domain Layer
-git add internal/domain/video.go internal/domain/errors.go && git commit -m "feat(domain): implement video entity with status lifecycle and error definitions"
+git add internal/domain/system.go
+git commit -m "feat(domain): add system metrics domain model for monitoring"
+
+git add internal/domain/errors.go
+git commit -m "refactor(domain): update error definitions for admin features"
+
+# Database Migrations
+git add migrations/000005_create_analytics_tables.up.sql
+git commit -m "feat(migration): add analytics tables for tracking views and engagement"
+
+git add migrations/000005_create_analytics_tables.down.sql
+git commit -m "feat(migration): add rollback migration for analytics tables"
+
+git add migrations/000006_create_reports_and_audit.up.sql
+git commit -m "feat(migration): add content reports and audit logs tables"
+
+git add migrations/000006_create_reports_and_audit.down.sql
+git commit -m "feat(migration): add rollback migration for reports and audit tables"
+
+git add migrations/000007_add_user_ban_fields.up.sql
+git commit -m "feat(migration): add user ban fields for moderation features"
+
+git add migrations/000007_add_user_ban_fields.down.sql
+git commit -m "feat(migration): add rollback migration for user ban fields"
 
 # Repository Layer
-git add internal/repository/interfaces.go internal/repository/postgres/video_repository.go && git commit -m "feat(repository): implement PostgreSQL video repository with HLS support"
+git add internal/repository/postgres/analytics_repository.go
+git commit -m "feat(repository): implement analytics repository with complex queries and aggregations"
 
-# Configuration
-git add internal/config/config.go && git commit -m "feat(config): add application configuration with database and storage settings"
+git add internal/repository/postgres/report_repository.go
+git commit -m "feat(repository): implement content report repository for moderation"
 
-# Core Services
-git add internal/service/ffmpeg_service.go && git commit -m "feat(service): implement FFmpeg service for video metadata extraction"
+git add internal/repository/postgres/audit_log_repository.go
+git commit -m "feat(repository): implement audit log repository for tracking admin actions"
 
-git add internal/service/upload_service.go && git commit -m "feat(service): implement video upload service with validation and persistence"
+# Service Layer
+git add internal/service/analytics_service.go
+git commit -m "feat(service): implement analytics service with Redis caching"
 
-git add internal/service/transcoding_service.go && git commit -m "feat(service): implement video transcoding service with HLS adaptive streaming support"
+git add internal/service/view_tracker.go
+git commit -m "feat(service): implement real-time view tracking using Redis sorted sets"
 
-# Queue System
-git add internal/queue/client.go internal/queue/tasks.go internal/queue/handlers.go && git commit -m "feat(queue): implement Redis-based job queue for asynchronous video processing"
+git add internal/service/moderation_service.go
+git commit -m "feat(service): implement moderation service for content reports and user bans"
 
-# HTTP Handlers
-git add internal/handler/upload_handler.go && git commit -m "feat(api): add video upload endpoints with multipart form handling"
+git add internal/service/audit_service.go
+git commit -m "feat(service): implement audit logging service for admin activity tracking"
 
-git add internal/handler/page_handler.go && git commit -m "feat(api): implement page rendering handlers for video listing and player"
-
-git add internal/handler/admin_handler.go && git commit -m "feat(api): add admin endpoints for video retry and queue management"
-
-git add internal/handler/streaming_handler.go && git commit -m "feat(api): implement HLS streaming endpoints with Redis caching and quality playlists"
-
-# API Server
-git add cmd/api/main.go && git commit -m "feat(server): bootstrap HTTP server with routing, middleware, and handler registration"
-
-# Worker Process
-git add cmd/worker/main.go && git commit -m "feat(worker): implement background worker for video transcoding job processing"
-
-# Utilities
-git add pkg/logger/logger.go && git commit -m "feat(utils): add structured logging utility with context support"
-
-git add pkg/validator/validator.go && git commit -m "feat(utils): implement request validation utilities for API handlers"
-
-# Templates - UI Components
-git add web/templates/layout_templ.go && git commit -m "feat(ui): add base layout template with responsive design"
-
-git add web/templates/upload_templ.go && git commit -m "feat(ui): implement video upload page with drag-and-drop support"
-
-git add web/templates/video_list_templ.go && git commit -m "feat(ui): add video gallery page with status badges and filtering"
-
-git add web/templates/video_player_templ.go && git commit -m "feat(ui): implement Video.js player with HLS adaptive streaming and quality selector"
-
-# Infrastructure
-git add docker-compose.yml && git commit -m "chore(docker): configure PostgreSQL and Redis services for local development"
-
-git add sqlc.yaml && git commit -m "chore(db): configure SQLC for type-safe SQL query generation"
-
-# Build Configuration
-git add Makefile && git commit -m "chore(build): add comprehensive Makefile with dev, build, test, and migration commands"
+git add internal/service/monitoring_service.go
+git commit -m "feat(service): implement system monitoring service with CPU, memory, and disk metrics"
 
 # Dependencies
-git add go.mod go.sum && git commit -m "chore(deps): initialize Go module with required dependencies"
+git add go.mod
+git commit -m "chore(deps): add gopsutil v3 for system monitoring"
 
-# Documentation
-git add README.md && git commit -m "docs: add comprehensive project documentation with setup instructions"
-
-# Environment Configuration
-git add .env.example && git commit -m "chore(config): add environment variables template with HLS configuration"
-
-# Git Configuration
-git add .gitignore && git commit -m "chore(git): configure gitignore to exclude build artifacts and .orchids directory"
-
-# Database Queries
-git add queries/videos.sql && git commit -m "feat(db): add SQLC query definitions for video CRUD operations"
-
-# Final Comprehensive Commit
-git add . && git commit -m "feat: complete Phase 4 HLS adaptive streaming implementation with Video.js player, Redis caching, and quality selector"
+git add go.sum
+git commit -m "chore(deps): update go.sum with gopsutil dependencies"
