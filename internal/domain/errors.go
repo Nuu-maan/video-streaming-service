@@ -35,4 +35,9 @@ var (
 	ErrForbidden             = errors.New("forbidden access")
 	ErrSessionNotFound       = errors.New("session not found")
 	ErrSessionExpired        = errors.New("session has expired")
+
+	ErrInvalidReportType    = errors.New("invalid report type")
+	ErrMissingReportTarget  = errors.New("report must have at least one target")
+	ErrMissingReportReason  = errors.New("report reason is required")
+	ErrReportNotFound       = errors.New("report not found")
 )
