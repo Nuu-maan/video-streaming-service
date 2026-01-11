@@ -406,4 +406,4 @@ Verify Redis is running and check worker logs for errors. Ensure Asynq is proper
 
 ## License
 
-This project is part of the Orchids video streaming platform series.
+MIT 
