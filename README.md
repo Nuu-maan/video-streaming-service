@@ -24,6 +24,9 @@ Completed user management system with bcrypt password hashing, JWT tokens, sessi
 **Phase 6: Admin Dashboard & System Monitoring**
 Implemented comprehensive admin dashboard with analytics tracking, content moderation system, audit logging, and system health monitoring. Features include real-time view tracking, content reports, user ban management, and performance metrics monitoring (CPU, memory, database, Redis, queue).
 
+**Phase 7: Search, Recommendations & Social Features (In Progress)**
+Foundation complete with domain models, database migrations, and configuration. Implemented PostgreSQL full-text search with tsvector and GIN indexes, recommendation engine interfaces (collaborative filtering, content-based, trending), and comprehensive social features (subscriptions, likes, comments, playlists, watch history, notifications). Database schema includes 8 new tables with automated triggers for denormalized counts. Redis caching strategy defined for search results and recommendations.
+
 ## What This Platform Does
 
 This is a professional-grade video streaming service that handles the complete video lifecycle from upload to delivery. Users can upload videos that get automatically processed into multiple quality levels, then streamed efficiently using industry-standard HLS protocol with adaptive bitrate switching.
@@ -199,7 +202,7 @@ make install-tools # Install required tools
 The codebase follows Clean Architecture with clear separation of concerns:
 
 **Domain Layer** (`internal/domain/`)
-Core business entities and logic. Includes Video, User, Analytics, Report, AuditLog, and System models with validation methods, error definitions, and role-based permission system.
+Core business entities and logic. Includes Video, User, Analytics, Report, AuditLog, System, Search, Recommendation, and Social models with validation methods, error definitions, and role-based permission system. Phase 7 adds SearchQuery, SearchFilters, RecommendationEngine interface, Subscription, Like, Comment, Playlist, WatchHistory, and Notification models.
 
 **Repository Layer** (`internal/repository/`)
 Database access using SQLC for type-safe queries. PostgreSQL implementations for videos, users, analytics, content reports, and audit logs with connection pooling and transaction support.
@@ -262,13 +265,29 @@ User accounts with authentication fields (password hash, email verification), pr
 - `content_reports` - User-submitted content reports with status tracking (pending, reviewed, resolved)
 - `audit_logs` - Complete audit trail of admin actions with metadata
 
+**Search & Social Tables (Phase 7)**
+- `videos` - Enhanced with search_vector (tsvector), category, tags, language columns and GIN indexes for full-text search
+- `subscriptions` - User subscriptions to creators with notification preferences
+- `likes` - Video likes/dislikes with unique user-video constraints
+- `comments` - Hierarchical comments with replies, soft deletes, pinning support
+- `playlists` - User-created playlists with visibility controls (public, private, unlisted)
+- `playlist_videos` - Videos in playlists with position ordering
+- `watch_history` - Viewing history with resume positions and completion tracking
+- `watch_later` - Save videos for later queue
+- `notifications` - Multi-type notifications (new_video, comment, reply, like, subscriber, mention)
+
 **Key Features**
 - UUID primary keys
 - Automatic timestamp management
-- Full-text search on video titles and descriptions
-- Indexes on frequently queried fields
+- PostgreSQL full-text search with tsvector and weighted ranking (title > description)
+- Trigram indexes for autocomplete suggestions
+- GIN indexes on arrays (tags) and tsvector columns
+- Indexes on frequently queried fields (view_count, like_count, created_at DESC)
 - Foreign key relationships with cascade deletes
 - Check constraints for data validation
+- Automated triggers for denormalized count updates (like_count, comment_count, subscriber_count)
+- Soft deletes for comments
+- Hierarchical comment structure with parent_id self-references
 
 ## Environment Configuration
 
@@ -301,6 +320,17 @@ Configuration is managed through `.env` file with these key settings:
 **Logging**
 - Log level control (debug, info, warn, error)
 - Structured JSON output for production
+
+**Phase 7: Search, Recommendations & Social Features**
+- `ENABLE_AUTOCOMPLETE` - Enable search autocomplete suggestions
+- `MAX_SEARCH_RESULTS` - Maximum search results per page
+- `SEARCH_CACHE_TTL` - Search result cache duration
+- `RECOMMENDATION_CACHE_TTL` - Recommendation cache duration
+- `TRENDING_UPDATE_INTERVAL` - How often to recalculate trending videos
+- `MAX_COMMENT_LENGTH` - Maximum characters in comments
+- `MAX_PLAYLIST_VIDEOS` - Maximum videos per playlist
+- `WATCH_HISTORY_RETENTION_DAYS` - How long to keep watch history
+- `BATCH_NOTIFICATIONS` - Enable notification batching
 
 ## Testing
 
@@ -354,17 +384,25 @@ Verify Redis is running and check worker logs for errors. Ensure Asynq is proper
 
 ## Next Development Phases
 
+**Phase 7: Remaining Implementation Tasks**
+- Search repository with full-text PostgreSQL queries
+- Social repositories (subscription, like, comment, playlist, watch history)
+- Search service with Redis caching layer
+- Recommendation service with collaborative/content-based filtering algorithms
+- Social services for all interaction types
+- HTTP handlers for search, recommendations, and social endpoints
+- HTMX templates for search UI, social interactions, and personalized feed
+- Real-time notifications with Server-Sent Events (SSE)
+
 **Future Enhancements**
-- Admin dashboard UI templates (HTMX/Templ)
-- Admin API handlers with authentication middleware
-- Video analytics visualization
-- Content moderation queue interface
-- Advanced search and filtering
-- Comment system and social features
-- Content recommendation engine
-- CDN integration for global delivery
+- Machine learning models for advanced recommendations
+- Elasticsearch integration for complex search queries
+- Video analytics visualization dashboard
+- Content creator analytics and insights
+- CDN integration for global content delivery
 - Live streaming capabilities
-- Advanced notification system
+- A/B testing for recommendation algorithms
+- Comment spam and toxicity detection
 
 ## License
 
