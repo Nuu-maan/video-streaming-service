@@ -1,408 +1,307 @@
 # Video Streaming Service
 
-A production-ready video streaming backend built with Go, implementing HTTP Live Streaming (HLS) with adaptive bitrate switching and comprehensive video management. The service uses Clean Architecture principles with PostgreSQL, Redis, and FFmpeg for professional video processing.
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis)](https://redis.io/)
 
-## Current Status
+A production-ready, high-performance video streaming platform built with Go. Features HTTP Live Streaming (HLS) with adaptive bitrate switching, comprehensive video management, and enterprise-grade scalability using Clean Architecture principles.
 
-The platform has completed six major development phases:
+## Features
 
-**Phase 1: Core Infrastructure**
-Built the foundation with Clean Architecture, PostgreSQL database, Redis caching, structured logging, and configuration management. Established the repository pattern and service layer architecture.
+- **HLS Adaptive Streaming** - Multi-quality video delivery (360p, 480p, 720p, 1080p) with automatic bitrate switching
+- **Video Processing Pipeline** - Automated transcoding with FFmpeg, thumbnail generation, and background job processing
+- **Clean Architecture** - Maintainable, testable codebase with clear separation of concerns
+- **Authentication & RBAC** - JWT tokens, bcrypt password hashing, role-based access control
+- **Admin Dashboard** - Content moderation, analytics, audit logging, system health monitoring
+- **Search & Social** - Full-text search, subscriptions, likes, comments, playlists, notifications
+- **Performance Optimized** - Redis caching, database indexing, rate limiting, CDN-ready
+- **Monitoring** - Prometheus metrics, Grafana dashboards, health checks
 
-**Phase 2: Video Upload Pipeline**
-Implemented multipart file uploads with chunking support, input validation, file system management, metadata extraction, and temporary storage handling. Added comprehensive error handling and upload progress tracking.
+## Tech Stack
 
-**Phase 3: Video Processing & Transcoding**
-Integrated FFmpeg for video transcoding with multiple quality outputs (360p, 480p, 720p, 1080p). Created background job processing using Asynq, thumbnail generation, and asynchronous task queues. Implemented process management and resource optimization.
+| Category | Technology |
+|----------|------------|
+| **Language** | Go 1.21+ |
+| **Framework** | Gin |
+| **Database** | PostgreSQL 16 |
+| **Cache** | Redis 7 |
+| **Object Storage** | MinIO (S3-compatible) |
+| **Video Processing** | FFmpeg |
+| **Task Queue** | Asynq |
+| **Monitoring** | Prometheus, Grafana |
+| **Reverse Proxy** | Nginx |
 
-**Phase 4: HLS Adaptive Streaming**
-Added HTTP Live Streaming protocol support with master playlist generation, quality-specific playlists, and segment-based delivery. Implemented Video.js player with automatic quality switching, Redis playlist caching, and MP4 fallback for broader compatibility. CORS-enabled streaming with proper cache headers.
-
-**Phase 5: Authentication & Authorization**
-Completed user management system with bcrypt password hashing, JWT tokens, session management, and role-based access control (user, premium, moderator, admin). Includes middleware for authentication, authorization, and rate limiting.
-
-**Phase 6: Admin Dashboard & System Monitoring**
-Implemented comprehensive admin dashboard with analytics tracking, content moderation system, audit logging, and system health monitoring. Features include real-time view tracking, content reports, user ban management, and performance metrics monitoring (CPU, memory, database, Redis, queue).
-
-**Phase 7: Search, Recommendations & Social Features (In Progress)**
-Foundation complete with domain models, database migrations, and configuration. Implemented PostgreSQL full-text search with tsvector and GIN indexes, recommendation engine interfaces (collaborative filtering, content-based, trending), and comprehensive social features (subscriptions, likes, comments, playlists, watch history, notifications). Database schema includes 8 new tables with automated triggers for denormalized counts. Redis caching strategy defined for search results and recommendations.
-
-## What This Platform Does
-
-This is a professional-grade video streaming service that handles the complete video lifecycle from upload to delivery. Users can upload videos that get automatically processed into multiple quality levels, then streamed efficiently using industry-standard HLS protocol with adaptive bitrate switching.
-
-## 🏗️ Architecture Overview
-
-### Clean Architecture Layers
+## Architecture
 
 ```
-cmd/                    # Application entry points
-├── api/               # HTTP API server
-└── worker/            # Background job processor
+cmd/
+├── api/                 # HTTP API server
+└── worker/              # Background job processor
 
-internal/              # Private application code
-├── domain/           # Business entities (Video, errors)
-├── repository/       # Database access layer
-│   ├── postgres/    # PostgreSQL implementation
-│   └── redis/       # Redis implementation
-├── service/         # Business logic layer
-├── handler/         # HTTP handlers (controllers)
-├── middleware/      # HTTP middleware
-├── worker/          # Background job handlers
-└── config/          # Configuration management
+internal/
+├── domain/              # Business entities & errors
+├── repository/          # Data access layer (PostgreSQL, Redis)
+├── service/             # Business logic
+├── handler/             # HTTP handlers
+├── middleware/          # Auth, rate limiting, logging
+├── queue/               # Background job definitions
+└── config/              # Configuration management
 
-pkg/                   # Public reusable packages
-├── logger/          # Structured logging
-├── validator/       # Input validation
-└── response/        # API response formatters
+pkg/
+├── logger/              # Structured logging (Zerolog)
+├── jwt/                 # JWT token utilities
+├── validator/           # Input validation
+├── response/            # API response formatting
+└── security/            # Password hashing
 
-migrations/           # Database migrations (version control for DB)
-queries/             # SQL queries for SQLC
-web/                 # Frontend assets
-├── templates/      # HTML templates
-├── static/         # CSS, JS, images
-└── uploads/        # Uploaded videos
+migrations/              # Database migrations
+queries/                 # SQLC query definitions
+web/
+├── templates/           # HTML templates
+├── static/              # CSS, JS assets
+└── uploads/             # Video storage
 ```
 
-### Why This Structure?
+## Prerequisites
 
-- **Separation of Concerns**: Each layer has one responsibility
-- **Testability**: Easy to mock dependencies and write tests
-- **Maintainability**: Changes in one layer don't break others
-- **Scalability**: Can swap implementations (e.g., PostgreSQL → MySQL)
+- **Go 1.21+** - [Download](https://golang.org/dl/)
+- **Docker & Docker Compose** - [Download](https://www.docker.com/)
+- **FFmpeg** - [Download](https://ffmpeg.org/download.html)
+- **Make** - Pre-installed on Linux/Mac, [Windows](https://gnuwin32.sourceforge.net/packages/make.htm)
 
-**Technology Stack**
-
-**Backend Framework**
-- Go 1.21+ for performance and concurrency
-- Gin web framework for HTTP routing
-- Clean Architecture for maintainability
-
-**Data Storage**
-- PostgreSQL for relational data with ACID guarantees
-- Redis for session management, caching, and real-time view tracking
-- File system for video storage
-
-**Video Processing**
-- FFmpeg for transcoding and thumbnail generation
-- HLS protocol for adaptive streaming
-- Multiple quality outputs (360p to 1080p)
-
-**Background Jobs**
-- Asynq for distributed task queue
-- Worker processes for async video processing
-
-**Development Tools**
-- SQLC for type-safe SQL queries
-- Templ for HTML templates
-- Air for hot reload development
-- golang-migrate for database versioning
-- Zerolog for structured logging
-
-**Authentication & Security**
-- Bcrypt for password hashing
-- JWT for API tokens
-- Redis sessions for web authentication
-- Role-based access control (RBAC)
-
-**Monitoring & Analytics**
-- gopsutil for system metrics (CPU, memory, disk)
-- Custom analytics tracking with Redis caching
-- Audit logging for admin actions
-- Content moderation system
-
-## 📋 Prerequisites
-
-Before running this project, install:
-
-- **Go 1.21+** ([download](https://golang.org/dl/))
-- **Docker & Docker Compose** ([download](https://www.docker.com/))
-- **Make** (usually pre-installed on Linux/Mac, [Windows setup](https://gnuwin32.sourceforge.net/packages/make.htm))
-
-Optional (will be auto-installed via Makefile):
-- Air, SQLC, Templ, golang-migrate
-
-## 🎬 Quick Start
-
-### 1. Clone and Setup
+## Quick Start
 
 ```bash
-# Navigate to project directory
+# Clone and navigate to project
 cd orchids-video-streaming-foundation
 
-# Copy environment variables
+# Copy environment configuration
 cp .env.example .env
 
-# Install required Go tools
+# Install Go tools (Air, SQLC, golang-migrate)
 make install-tools
 
-# Start PostgreSQL and Redis with Docker
+# Start infrastructure (PostgreSQL, Redis, MinIO)
 make docker-up
-```
 
-### 2. Run Database Migrations
-
-```bash
-# Create tables in PostgreSQL
+# Run database migrations
 make migrate-up
-```
 
-### 3. Generate SQLC Code
-
-```bash
-# Generate type-safe Go code from SQL queries
+# Generate type-safe SQL code
 make sqlc
-```
 
-### 4. Run the Server
-
-```bash
-# Development mode with hot reload
+# Start development server with hot reload
 make dev
-
-# Or run directly
-make run
 ```
 
-The server will start at `http://localhost:8080`
+Server runs at `http://localhost:8080`
 
-### 5. Test the API
+## API Reference
+
+### Health & Metrics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Service health check (database, Redis status) |
+| GET | `/metrics` | Prometheus metrics |
+
+### Video Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/videos` | List videos (paginated) |
+| GET | `/api/videos/:id` | Get video details |
+| POST | `/api/videos/upload` | Upload new video |
+| GET | `/api/videos/:id/status` | Get processing status |
+| DELETE | `/api/videos/:id` | Delete video |
+
+### HLS Streaming
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/videos/:id/hls/master.m3u8` | Master playlist (all qualities) |
+| GET | `/api/videos/:id/hls/:quality/playlist.m3u8` | Quality-specific playlist |
+| GET | `/api/videos/:id/hls/:quality/:segment` | Video segment |
+| GET | `/api/videos/:id/stream/:quality` | MP4 fallback |
+
+### Admin Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/videos/:id/retry` | Retry failed processing |
+| GET | `/api/admin/queue/stats` | Queue statistics |
+| GET | `/api/admin/workers` | Active workers |
+| DELETE | `/api/admin/videos/:id/cache` | Clear video cache |
+
+### Web Interface
+
+| Endpoint | Description |
+|----------|-------------|
+| `/` | Upload page |
+| `/videos` | Video list |
+| `/videos/:id` | Video player |
+
+## Testing the API
 
 ```bash
 # Health check
 curl http://localhost:8080/health
 
-# Metrics
-curl http://localhost:8080/metrics
+# List videos
+curl http://localhost:8080/api/videos
 
-# API endpoints (placeholders for now)
-curl http://localhost:8080/api/v1/videos
+# Get specific video
+curl http://localhost:8080/api/videos/{video-id}
+
+# Upload video
+curl -X POST http://localhost:8080/api/videos/upload \
+  -F "video=@sample.mp4" \
+  -F "title=My Video" \
+  -F "description=Description here"
+
+# Check processing status
+curl http://localhost:8080/api/videos/{video-id}/status
 ```
 
-## 🛠️ Available Commands
-
-Run `make help` to see all commands:
+## Make Commands
 
 ```bash
-make dev           # Run with hot reload (Air)
+make dev           # Development server with hot reload
 make build         # Build production binaries
 make test          # Run tests with coverage
-make migrate-up    # Run database migrations
+make migrate-up    # Apply database migrations
 make migrate-down  # Rollback migrations
-make sqlc          # Generate SQLC code
-make templ         # Generate Templ templates
-make docker-up     # Start Docker services
-make docker-down   # Stop Docker services
+make sqlc          # Generate type-safe SQL
+make docker-up     # Start infrastructure
+make docker-down   # Stop infrastructure
 make clean         # Remove build artifacts
-make install-tools # Install required tools
+make install-tools # Install Go tools
 ```
 
-## Project Structure
+## Configuration
 
-The codebase follows Clean Architecture with clear separation of concerns:
+Create `.env` from `.env.example`:
 
-**Domain Layer** (`internal/domain/`)
-Core business entities and logic. Includes Video, User, Analytics, Report, AuditLog, System, Search, Recommendation, and Social models with validation methods, error definitions, and role-based permission system. Phase 7 adds SearchQuery, SearchFilters, RecommendationEngine interface, Subscription, Like, Comment, Playlist, WatchHistory, and Notification models.
+```env
+# Server
+SERVER_PORT=8080
+ENVIRONMENT=development
 
-**Repository Layer** (`internal/repository/`)
-Database access using SQLC for type-safe queries. PostgreSQL implementations for videos, users, analytics, content reports, and audit logs with connection pooling and transaction support.
+# PostgreSQL
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=video_streaming
+DB_SSLMODE=disable
 
-**Service Layer** (`internal/service/`)
-Business logic including upload handling, FFmpeg transcoding, session management, password security with bcrypt hashing, analytics tracking, content moderation, audit logging, and system monitoring.
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
 
-**Handler Layer** (`internal/handler/`)
-HTTP request handling with Gin framework. Includes upload endpoints, streaming API, authentication, admin functions, moderation tools, and page rendering.
+# Storage
+UPLOAD_PATH=./web/uploads
+MAX_FILE_SIZE=2147483648
+ALLOWED_FORMATS=mp4,mov,avi,mkv,webm
 
-**Queue Layer** (`internal/queue/`)
-Background job processing with Asynq for video transcoding and thumbnail generation.
+# Worker
+WORKER_CONCURRENCY=4
+JOB_TIMEOUT=3600
 
-**Configuration** (`internal/config/`)
-Environment-based settings for server, database, Redis, storage, and worker processes.
+# Features
+ENABLE_AUTOCOMPLETE=true
+MAX_SEARCH_RESULTS=50
+SEARCH_CACHE_TTL=300
+```
 
-**Utilities** (`pkg/`)
-Reusable packages for logging (zerolog), JWT tokens, password security, response formatting, and validation.
+## Database Schema
 
-## API Endpoints
+### Core Tables
 
-**Health & Monitoring**
-- GET `/health` - Service health check (database and Redis status)
-- GET `/metrics` - Performance and usage metrics
+| Table | Description |
+|-------|-------------|
+| `videos` | Video metadata, processing status, HLS paths |
+| `users` | User accounts, roles, authentication |
+| `video_views` | Real-time view tracking |
+| `video_analytics` | Aggregated metrics |
 
-**Video Management**
-- GET `/api/v1/videos` - List all videos
-- GET `/api/v1/videos/:id` - Get specific video details
-- POST `/api/v1/videos/upload` - Upload new video
-- DELETE `/api/v1/videos/:id` - Delete video
+### Social Tables
 
-**HLS Streaming**
-- GET `/api/videos/:id/hls/master.m3u8` - Master playlist with all quality levels
-- GET `/api/videos/:id/hls/:quality/playlist.m3u8` - Quality-specific playlist
-- GET `/api/videos/:id/hls/:quality/:segment` - Video segment delivery
-- GET `/api/videos/:id/stream/:quality` - MP4 fallback streaming
+| Table | Description |
+|-------|-------------|
+| `subscriptions` | Creator subscriptions |
+| `likes` | Video likes/dislikes |
+| `comments` | Hierarchical comments |
+| `playlists` | User playlists |
+| `watch_history` | Viewing history |
+| `notifications` | User notifications |
 
-**Admin Operations**
-- DELETE `/api/admin/videos/:id/cache` - Clear playlist cache for video
+### Admin Tables
 
-**Web Interface**
-- GET `/` - Video list page
-- GET `/upload` - Upload page
-- GET `/videos/:id` - Video player page
+| Table | Description |
+|-------|-------------|
+| `content_reports` | Moderation reports |
+| `audit_logs` | Admin action history |
 
-**Database Schema**
-
-**Videos Table**
-Stores video metadata, processing status, and file references. Includes fields for HLS support (master playlist path, quality variants), transcoding progress, and status tracking (uploaded, processing, ready, failed).
-
-**Users Table**
-User accounts with authentication fields (password hash, email verification), profile data (username, bio, avatar), role-based permissions (user, premium, moderator, admin), ban management fields, and OAuth integration support.
-
-**Analytics Tables**
-- `video_views` - Real-time view tracking with user and timestamp data
-- `video_analytics` - Aggregated video performance metrics (total views, unique viewers, watch time)
-- `user_analytics` - User engagement metrics (uploads, views, activity patterns)
-
-**Moderation Tables**
-- `content_reports` - User-submitted content reports with status tracking (pending, reviewed, resolved)
-- `audit_logs` - Complete audit trail of admin actions with metadata
-
-**Search & Social Tables (Phase 7)**
-- `videos` - Enhanced with search_vector (tsvector), category, tags, language columns and GIN indexes for full-text search
-- `subscriptions` - User subscriptions to creators with notification preferences
-- `likes` - Video likes/dislikes with unique user-video constraints
-- `comments` - Hierarchical comments with replies, soft deletes, pinning support
-- `playlists` - User-created playlists with visibility controls (public, private, unlisted)
-- `playlist_videos` - Videos in playlists with position ordering
-- `watch_history` - Viewing history with resume positions and completion tracking
-- `watch_later` - Save videos for later queue
-- `notifications` - Multi-type notifications (new_video, comment, reply, like, subscriber, mention)
-
-**Key Features**
+**Key Features:**
 - UUID primary keys
-- Automatic timestamp management
-- PostgreSQL full-text search with tsvector and weighted ranking (title > description)
-- Trigram indexes for autocomplete suggestions
-- GIN indexes on arrays (tags) and tsvector columns
-- Indexes on frequently queried fields (view_count, like_count, created_at DESC)
-- Foreign key relationships with cascade deletes
-- Check constraints for data validation
-- Automated triggers for denormalized count updates (like_count, comment_count, subscriber_count)
+- Full-text search with tsvector
+- GIN indexes for arrays and search
+- Automated triggers for denormalized counts
 - Soft deletes for comments
-- Hierarchical comment structure with parent_id self-references
-
-## Environment Configuration
-
-Configuration is managed through `.env` file with these key settings:
-
-**Server Settings**
-- `SERVER_PORT` - HTTP port (default: 8080)
-- `ENVIRONMENT` - development or production mode
-- Timeout configurations for reads, writes, and graceful shutdown
-
-**Database**
-- PostgreSQL connection details (host, port, credentials)
-- Connection pool settings for performance optimization
-- Max open connections and idle connection limits
-
-**Redis**
-- Connection configuration for caching and sessions
-- Pool size and connection management
-
-**Storage**
-- Upload path for video files
-- Maximum file size limits (default: 2GB)
-- Paths for thumbnails and transcoded outputs
-- Allowed video formats
-
-**Worker Configuration**
-- Concurrent job processing limits
-- Job timeout settings for transcoding operations
-
-**Logging**
-- Log level control (debug, info, warn, error)
-- Structured JSON output for production
-
-**Phase 7: Search, Recommendations & Social Features**
-- `ENABLE_AUTOCOMPLETE` - Enable search autocomplete suggestions
-- `MAX_SEARCH_RESULTS` - Maximum search results per page
-- `SEARCH_CACHE_TTL` - Search result cache duration
-- `RECOMMENDATION_CACHE_TTL` - Recommendation cache duration
-- `TRENDING_UPDATE_INTERVAL` - How often to recalculate trending videos
-- `MAX_COMMENT_LENGTH` - Maximum characters in comments
-- `MAX_PLAYLIST_VIDEOS` - Maximum videos per playlist
-- `WATCH_HISTORY_RETENTION_DAYS` - How long to keep watch history
-- `BATCH_NOTIFICATIONS` - Enable notification batching
-
-## Testing
-
-Run tests with coverage analysis:
-
-```bash
-make test
-```
-
-This executes all tests with race detection and generates coverage reports (coverage.out and coverage.html). The testing approach includes unit tests for services with mocked dependencies, integration tests for repositories with real database connections, and handler tests for HTTP endpoints using httptest.
-
-## Implementation Details
-
-**Error Handling**
-Domain-specific errors propagate through layers and get translated to appropriate HTTP status codes at the handler level. Uses error wrapping for context preservation.
-
-**Context Usage**
-Every function accepts context.Context for proper cancellation, timeout handling, and request ID propagation across the application.
-
-**Logging Pattern**
-Structured logging with contextual fields for debugging and monitoring. Request IDs track operations across services.
-
-**Dependency Injection**
-No global state. Dependencies passed as parameters to constructors, enabling easy testing and flexibility.
-
-**Production Readiness**
-- Clean Architecture for maintainable code
-- Configuration management following 12-factor principles
-- Graceful shutdown without dropping requests
-- Connection pooling for database and Redis
-- Health checks for load balancer integration
-- Type-safe SQL preventing injection attacks
-- Request ID tracking for distributed tracing
 
 ## Troubleshooting
 
-**Database Connection Issues**
-Start PostgreSQL with `make docker-up` and verify connection using `docker exec -it video_streaming_postgres psql -U postgres -d video_streaming`
+| Issue | Solution |
+|-------|----------|
+| Database connection failed | Run `make docker-up`, verify with `docker ps` |
+| Migration errors | Check version with migrate tool, use `migrate force` if needed |
+| Port 8080 in use | Change `SERVER_PORT` in `.env` or kill existing process |
+| FFmpeg not found | Install FFmpeg and add to PATH |
+| Worker not processing | Verify Redis is running, check worker logs |
+| Video upload fails | Check file size limits and allowed formats |
 
-**Migration Errors**
-Check migration status with migrate tool and use force command if needed to fix version conflicts.
+## Production Deployment
 
-**Port Conflicts**
-Change SERVER_PORT in .env file or terminate the process using the port.
+### Docker
 
-**FFmpeg Not Found**
-Install FFmpeg and ensure it's in system PATH for video processing to work.
+```bash
+# Build production image
+docker build -t video-streaming:latest .
 
-**Worker Not Processing Jobs**
-Verify Redis is running and check worker logs for errors. Ensure Asynq is properly configured.
+# Run with docker-compose
+docker-compose -f docker-compose.prod.yml up -d
+```
 
-## Next Development Phases
+### Infrastructure Requirements
 
-**Phase 7: Remaining Implementation Tasks**
-- Search repository with full-text PostgreSQL queries
-- Social repositories (subscription, like, comment, playlist, watch history)
-- Search service with Redis caching layer
-- Recommendation service with collaborative/content-based filtering algorithms
-- Social services for all interaction types
-- HTTP handlers for search, recommendations, and social endpoints
-- HTMX templates for search UI, social interactions, and personalized feed
-- Real-time notifications with Server-Sent Events (SSE)
+- **PostgreSQL 16+** with connection pooling (PgBouncer recommended)
+- **Redis 7+** for caching and sessions
+- **MinIO** or S3-compatible storage for videos
+- **Nginx** as reverse proxy with caching enabled
+- **FFmpeg 6+** with hardware acceleration support
 
-**Future Enhancements**
-- Machine learning models for advanced recommendations
-- Elasticsearch integration for complex search queries
-- Video analytics visualization dashboard
-- Content creator analytics and insights
-- CDN integration for global content delivery
-- Live streaming capabilities
-- A/B testing for recommendation algorithms
-- Comment spam and toxicity detection
+### Monitoring
+
+- Prometheus scrapes `/metrics` endpoint
+- Grafana dashboards in `dashboards/` directory
+- Health checks via `/health` for load balancers
+
+## Performance
+
+Target metrics:
+
+| Operation | Target (p95) |
+|-----------|-------------|
+| Homepage load | < 200ms |
+| Video list | < 100ms |
+| Search | < 300ms |
+| Video start | < 500ms |
+| API endpoints | < 50ms |
+| Cache hit ratio | > 90% |
 
 ## License
 
