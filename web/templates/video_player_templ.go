@@ -10,7 +10,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import (
 	"fmt"
-	"github.com/orchids/video-streaming/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 )
 
 func VideoPlayerPage(video *domain.Video) templ.Component {
@@ -58,7 +58,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var3 string
 				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/api/videos/%s/hls/master.m3u8", video.ID.String()))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 27, Col: 85}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 27, Col: 85}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
@@ -76,7 +76,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/api/videos/%s/stream/720p", video.ID.String()))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 44, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 44, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -119,7 +119,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(video.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 74, Col: 21}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 74, Col: 21}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -147,7 +147,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var6 string
 				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d Qualities", len(video.AvailableQualities)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 85, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 85, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 				if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(video.Description)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 104, Col: 51}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 104, Col: 51}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -193,7 +193,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(formatDuration(video.Duration))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 112, Col: 76}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 112, Col: 76}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
@@ -212,7 +212,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 				var templ_7745c5c3_Var9 string
 				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(video.OriginalResolution)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 119, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 119, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 				if templ_7745c5c3_Err != nil {
@@ -230,7 +230,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(formatFileSize(video.FileSize))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 125, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 125, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -243,7 +243,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(video.CreatedAt.Format("Jan 2, 2006"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 130, Col: 82}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 130, Col: 82}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -266,7 +266,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(quality)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 140, Col: 19}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 140, Col: 19}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
@@ -295,7 +295,7 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 					var templ_7745c5c3_Var13 string
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d%%", video.TranscodingProgress))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_player.templ`, Line: 157, Col: 103}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_player.templ`, Line: 157, Col: 103}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
@@ -337,31 +337,5 @@ func VideoPlayerPage(video *domain.Video) templ.Component {
 	})
 }
 
-func formatFileSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-func formatDuration(seconds int) string {
-	if seconds < 60 {
-		return fmt.Sprintf("%d sec", seconds)
-	}
-	minutes := seconds / 60
-	remainingSeconds := seconds % 60
-	if minutes < 60 {
-		return fmt.Sprintf("%d:%02d", minutes, remainingSeconds)
-	}
-	hours := minutes / 60
-	remainingMinutes := minutes % 60
-	return fmt.Sprintf("%d:%02d:%02d", hours, remainingMinutes, remainingSeconds)
-}
-
+// formatFileSize and formatDuration live in helpers.go.
 var _ = templruntime.GeneratedTemplate

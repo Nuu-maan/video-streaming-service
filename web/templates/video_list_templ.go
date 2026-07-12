@@ -10,8 +10,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import (
 	"fmt"
-	"github.com/orchids/video-streaming/internal/domain"
-	"time"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 )
 
 func VideoListPage(videos []*domain.Video) templ.Component {
@@ -109,7 +108,7 @@ func VideoCard(video *domain.Video) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(video.Title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 61, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 60, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -123,15 +122,15 @@ func VideoCard(video *domain.Video) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if video.Duration != nil {
+		if video.Duration > 0 {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<span class=\"text-sm text-gray-400\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(formatDuration(*video.Duration))
+			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(formatDuration(video.Duration))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 68, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 67, Col: 38}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -149,7 +148,7 @@ func VideoCard(video *domain.Video) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(formatTimeAgo(video.CreatedAt))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 74, Col: 36}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 73, Col: 36}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -162,7 +161,7 @@ func VideoCard(video *domain.Video) templ.Component {
 		var templ_7745c5c3_Var7 templ.SafeURL
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/videos/%s", video.ID.String())))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 78, Col: 70}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 77, Col: 70}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -209,7 +208,7 @@ func StatusBadge(status domain.VideoStatus) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(templ.CSSClasses(templ_7745c5c3_Var9).String())
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 1, Col: 0}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 1, Col: 0}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -222,7 +221,7 @@ func StatusBadge(status domain.VideoStatus) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(string(status))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `web/templates/video_list.templ`, Line: 89, Col: 18}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `video_list.templ`, Line: 88, Col: 18}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -236,49 +235,5 @@ func StatusBadge(status domain.VideoStatus) templ.Component {
 	})
 }
 
-func statusBadgeClass(status domain.VideoStatus) string {
-	switch status {
-	case domain.StatusReady:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-600/30 text-green-200 border border-green-500/30"
-	case domain.StatusProcessing:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-600/30 text-yellow-200 border border-yellow-500/30"
-	case domain.StatusFailed:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-600/30 text-red-200 border border-red-500/30"
-	default:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-600/30 text-gray-200 border border-gray-500/30"
-	}
-}
-
-func formatDuration(seconds float64) string {
-	minutes := int(seconds) / 60
-	secs := int(seconds) % 60
-	return fmt.Sprintf("%d:%02d", minutes, secs)
-}
-
-func formatTimeAgo(t time.Time) string {
-	diff := time.Since(t)
-
-	if diff < time.Minute {
-		return "just now"
-	} else if diff < time.Hour {
-		mins := int(diff.Minutes())
-		if mins == 1 {
-			return "1 minute ago"
-		}
-		return fmt.Sprintf("%d minutes ago", mins)
-	} else if diff < 24*time.Hour {
-		hours := int(diff.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-		return fmt.Sprintf("%d hours ago", hours)
-	} else {
-		days := int(diff.Hours() / 24)
-		if days == 1 {
-			return "1 day ago"
-		}
-		return fmt.Sprintf("%d days ago", days)
-	}
-}
-
+// statusBadgeClass, formatDuration and formatTimeAgo live in helpers.go.
 var _ = templruntime.GeneratedTemplate
