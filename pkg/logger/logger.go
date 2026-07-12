@@ -8,6 +8,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/Nuu-maan/video-streaming-service/pkg/appctx"
 )
 
 type Logger struct {
@@ -79,8 +81,13 @@ func (l *Logger) Fatal(ctx context.Context, msg string, err error, fields map[st
 }
 
 func (l *Logger) addFields(event *zerolog.Event, ctx context.Context, fields map[string]interface{}) {
-	if requestID := ctx.Value("request_id"); requestID != nil {
-		event.Str("request_id", requestID.(string))
+	if ctx != nil {
+		if requestID := appctx.RequestID(ctx); requestID != "" {
+			event.Str("request_id", requestID)
+		}
+		if principal, ok := appctx.PrincipalFrom(ctx); ok {
+			event.Str("user_id", principal.UserID.String())
+		}
 	}
 
 	for key, value := range fields {
