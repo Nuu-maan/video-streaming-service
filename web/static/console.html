@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Test Console — Video Streaming Service</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
+    --muted: #8b93a5; --accent: #4f9cf9; --ok: #3fb950; --err: #f85149; --warn: #d29922;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --line: #e1e4e8; --text: #1c2128;
+      --muted: #6b7280; --accent: #0969da; --ok: #1a7f37; --err: #cf222e; --warn: #9a6700;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .sub { color: var(--muted); margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, select, button, textarea {
+    width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  button {
+    background: var(--accent); color: #fff; border: 0; cursor: pointer; font-weight: 600; margin-top: 10px;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 500; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  pre {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+    overflow-x: auto; font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+    max-height: 320px; margin: 10px 0 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .who { font-size: 12px; color: var(--muted); margin-top: 8px; word-break: break-all; }
+  .bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  td a { color: var(--accent); }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<h1>API Test Console</h1>
+<div class="sub">Drives every endpoint end-to-end. Token is kept in <code>localStorage</code> and sent as <code>Authorization: Bearer</code>.</div>
+
+<div class="grid">
+
+  <!-- ── Auth ─────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>1 · Authentication</h2>
+
+    <label>Username</label>
+    <input id="username" value="alice">
+    <label>Email <span style="opacity:.6">(register only)</span></label>
+    <input id="email" value="alice@example.com">
+    <label>Password</label>
+    <input id="password" type="password" value="Str0ng!Passw0rd">
+
+    <div class="row">
+      <button onclick="register()">Register</button>
+      <button class="ghost" onclick="login()">Login</button>
+    </div>
+    <div class="row">
+      <button class="ghost" onclick="me()">GET /me</button>
+      <button class="ghost" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="who" id="who">Not signed in.</div>
+    <pre id="authOut">—</pre>
+  </section>
+
+  <!-- ── Upload ───────────────────────────────────────── -->
+  <section class="panel">
+    <h2>2 · Upload</h2>
+
+    <label>Video file</label>
+    <input id="file" type="file" accept="video/*">
+    <label>Title</label>
+    <input id="title" value="Test clip">
+    <label>Description</label>
+    <input id="description" value="Uploaded from the test console">
+    <label>Visibility</label>
+    <select id="visibility">
+      <option value="public">public</option>
+      <option value="unlisted">unlisted</option>
+      <option value="private">private</option>
+    </select>
+
+    <button onclick="upload()">Upload &amp; watch transcoding</button>
+    <div class="bar"><i id="progress"></i></div>
+    <pre id="uploadOut">—</pre>
+  </section>
+
+  <!-- ── Videos ───────────────────────────────────────── -->
+  <section class="panel">
+    <h2>3 · Videos</h2>
+
+    <div class="row">
+      <div><label>Search</label><input id="search" placeholder="full-text"></div>
+      <div><label>Limit</label><input id="limit" type="number" value="10"></div>
+    </div>
+    <label><input type="checkbox" id="mine" style="width:auto"> only mine (needs token)</label>
+
+    <button onclick="listVideos()">List videos</button>
+    <div id="videoTable"></div>
+    <pre id="videosOut">—</pre>
+  </section>
+
+  <!-- ── Admin ────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>4 · Admin <span class="badge warn">needs permission</span></h2>
+    <div class="sub" style="margin:0 0 6px;font-size:12px">
+      A fresh account is role <code>user</code> and will get <code>403</code> here — that is the RBAC working.
+      Promote yourself in SQL to test: <code>UPDATE users SET role='admin' WHERE username='alice';</code>
+    </div>
+
+    <button class="ghost" onclick="call('GET','/api/admin/queue/stats','adminOut')">Queue stats</button>
+    <button class="ghost" onclick="call('GET','/api/admin/workers','adminOut')">Workers</button>
+    <button class="ghost" onclick="call('GET','/api/admin/analytics/dashboard','adminOut')">Analytics dashboard</button>
+    <button class="ghost" onclick="call('GET','/api/admin/monitoring/metrics','adminOut')">Monitoring metrics</button>
+    <button class="ghost" onclick="call('GET','/api/admin/reports/pending','adminOut')">Pending reports</button>
+    <pre id="adminOut">—</pre>
+  </section>
+
+  <!-- ── Health ───────────────────────────────────────── -->
+  <section class="panel full">
+    <h2>5 · Service</h2>
+    <div class="row">
+      <button class="ghost" onclick="call('GET','/health','healthOut')">GET /health</button>
+      <button class="ghost" onclick="rawText('/metrics','healthOut')">GET /metrics (Prometheus)</button>
+    </div>
+    <pre id="healthOut">—</pre>
+  </section>
+
+</div>
+
+<script>
+const TOKEN_KEY = 'vss.token';
+const token = () => localStorage.getItem(TOKEN_KEY);
+
+function headers(extra = {}) {
+  const h = { ...extra };
+  const t = token();
+  if (t) h['Authorization'] = 'Bearer ' + t;
+  return h;
+}
+
+function show(id, status, body) {
+  const ok = status >= 200 && status < 300;
+  const cls = ok ? 'ok' : 'err';
+  const text = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+  document.getElementById(id).innerHTML =
+    `<span class="badge ${cls}">${status}</span>\n` + escapeHtml(text);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+// Generic JSON call. Returns the parsed body so callers can chain.
+async function call(method, path, outId, body) {
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: headers(body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+    if (outId) show(outId, res.status, parsed);
+    return { status: res.status, body: parsed };
+  } catch (err) {
+    if (outId) show(outId, 0, 'Network error: ' + err.message + '\n\nIs the API running on this origin?');
+    return { status: 0, body: null };
+  }
+}
+
+async function rawText(path, outId) {
+  const res = await fetch(path, { headers: headers() });
+  const text = await res.text();
+  show(outId, res.status, text.split('\n').slice(0, 40).join('\n') + '\n…');
+}
+
+function saveToken(result) {
+  const tok = result.body?.data?.access_token;
+  if (tok) {
+    localStorage.setItem(TOKEN_KEY, tok);
+    const u = result.body.data.user;
+    document.getElementById('who').textContent = `Signed in as ${u.username} (role: ${u.role})`;
+  }
+}
+
+async function register() {
+  const r = await call('POST', '/api/auth/register', 'authOut', {
+    username: val('username'), email: val('email'), password: val('password'),
+  });
+  saveToken(r);
+}
+
+async function login() {
+  const r = await call('POST', '/api/auth/login', 'authOut', {
+    identifier: val('username'), password: val('password'),
+  });
+  saveToken(r);
+}
+
+async function me() {
+  const r = await call('GET', '/api/auth/me', 'authOut');
+  if (r.status === 200) {
+    const u = r.body.data;
+    document.getElementById('who').textContent = `Signed in as ${u.username} (role: ${u.role})`;
+  }
+}
+
+function logout() {
+  localStorage.removeItem(TOKEN_KEY);
+  document.getElementById('who').textContent = 'Not signed in.';
+  show('authOut', 200, 'Token cleared.');
+}
+
+// Upload, then poll the status endpoint until the worker finishes.
+async function upload() {
+  const f = document.getElementById('file').files[0];
+  if (!f) return show('uploadOut', 0, 'Pick a video file first.');
+  if (!token()) return show('uploadOut', 401, 'Upload requires a token — register or log in first.');
+
+  const form = new FormData();
+  form.append('video', f);
+  form.append('title', val('title'));
+  form.append('description', val('description'));
+  form.append('visibility', val('visibility'));
+
+  show('uploadOut', 100, 'Uploading…');
+  const res = await fetch('/api/videos/upload', { method: 'POST', headers: headers(), body: form });
+  const body = await res.json().catch(() => ({}));
+  show('uploadOut', res.status, body);
+
+  const id = body?.data?.id;
+  if (res.ok && id) pollStatus(id);
+}
+
+// The worker reports transcoding_progress; this is how you can tell the
+// upload -> queue -> ffmpeg -> HLS pipeline actually ran.
+async function pollStatus(id) {
+  const bar = document.getElementById('progress');
+
+  for (let i = 0; i < 600; i++) {
+    const r = await call('GET', `/api/videos/${id}/status`);
+    const d = r.body?.data;
+    if (!d) break;
+
+    bar.style.width = (d.progress || 0) + '%';
+    show('uploadOut', r.status, d);
+
+    if (d.status === 'ready') {
+      document.getElementById('uploadOut').innerHTML +=
+        `\n\n<span class="badge ok">READY</span> ` +
+        `<a href="/videos/${id}" target="_blank">open player</a> · ` +
+        `<a href="/api/videos/${id}/hls/master.m3u8" target="_blank">master.m3u8</a>`;
+      listVideos();
+      return;
+    }
+    if (d.status === 'failed') {
+      document.getElementById('uploadOut').innerHTML +=
+        `\n\n<span class="badge err">FAILED</span> check the worker log (ffmpeg on PATH?)`;
+      return;
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+async function listVideos() {
+  const params = new URLSearchParams({ limit: val('limit') || '10' });
+  if (val('search')) params.set('search', val('search'));
+  if (document.getElementById('mine').checked) params.set('mine', 'true');
+
+  const r = await call('GET', '/api/videos?' + params, 'videosOut');
+  renderVideos(r.body?.data || []);
+}
+
+function renderVideos(videos) {
+  const el = document.getElementById('videoTable');
+  if (!videos.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML = `<table>
+    <tr><th>Title</th><th>Status</th><th>Vis</th><th></th></tr>
+    ${videos.map(v => `<tr>
+      <td><a href="/videos/${v.id}" target="_blank">${escapeHtml(v.title)}</a></td>
+      <td>${v.status}${v.status === 'processing' ? ` (${v.transcoding_progress || 0}%)` : ''}</td>
+      <td>${v.visibility || '—'}</td>
+      <td><a href="#" onclick="del('${v.id}');return false">delete</a></td>
+    </tr>`).join('')}
+  </table>`;
+}
+
+async function del(id) {
+  await call('DELETE', '/api/videos/' + id, 'videosOut');
+  listVideos();
+}
+
+const val = id => document.getElementById(id).value.trim();
+
+// Show health and any stored session on load.
+call('GET', '/health', 'healthOut');
+if (token()) me();
+</script>
+
+</body>
+</html>
