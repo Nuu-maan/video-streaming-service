@@ -1,4 +1,6 @@
-.PHONY: help dev worker build build-worker test migrate-up migrate-down migrate-create sqlc templ docker-up docker-down clean install-tools run-all test-player test-hls
+.PHONY: help dev worker build build-worker test check vet fmt fmt-check lint run \
+	migrate-up migrate-down migrate-create templ docker-up docker-down clean \
+	install-tools run-all test-player test-hls
 
 help:
 	@echo "Available commands:"
@@ -8,10 +10,10 @@ help:
 	@echo "  make build-worker  - Build worker binary"
 	@echo "  make run-all       - Start Docker, migrate, API server & worker"
 	@echo "  make test          - Run tests with coverage"
+	@echo "  make check         - gofmt + vet + test (what CI runs)"
 	@echo "  make migrate-up    - Run database migrations"
 	@echo "  make migrate-down  - Rollback database migrations"
 	@echo "  make migrate-create NAME=xxx - Create new migration"
-	@echo "  make sqlc          - Generate SQLC code"
 	@echo "  make templ         - Generate Templ templates"
 	@echo "  make docker-up     - Start Docker services"
 	@echo "  make docker-down   - Stop Docker services"
@@ -24,18 +26,20 @@ dev:
 	air
 
 worker:
-	@go run cmd/worker/main.go
+	@go run ./cmd/worker
 
+# Build the package, not a single file: `go build cmd/api/main.go` compiles only
+# that one file and fails as soon as the package gains a second.
 build:
 	@echo "Building API server..."
-	@go build -o bin/api cmd/api/main.go
+	@go build -o bin/api ./cmd/api
 	@echo "Building worker..."
-	@go build -o bin/worker cmd/worker/main.go
+	@go build -o bin/worker ./cmd/worker
 	@echo "Build complete!"
 
 build-worker:
 	@echo "Building worker..."
-	@go build -o bin/worker cmd/worker/main.go
+	@go build -o bin/worker ./cmd/worker
 	@echo "Worker build complete!"
 
 run-all:
@@ -50,6 +54,17 @@ test:
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
+# What CI should run. Fails on anything gofmt would rewrite, rather than
+# silently reformatting it.
+check: fmt-check vet test
+
+vet:
+	@go vet ./...
+
+fmt-check:
+	@test -z "$$(gofmt -l ./cmd ./internal ./pkg)" || \
+		(echo "Not gofmt-clean:"; gofmt -l ./cmd ./internal ./pkg; exit 1)
+
 migrate-up:
 	@migrate -path migrations -database "postgres://postgres:postgres@localhost:5432/video_streaming?sslmode=disable" up
 
@@ -58,10 +73,6 @@ migrate-down:
 
 migrate-create:
 	@migrate create -ext sql -dir migrations -seq $(NAME)
-
-sqlc:
-	@sqlc generate
-	@echo "SQLC code generated!"
 
 templ:
 	@templ generate
@@ -84,14 +95,16 @@ clean:
 
 install-tools:
 	@echo "Installing required tools..."
-	@go install github.com/cosmtrek/air@latest
-	@go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	@go install github.com/a-h/templ/cmd/templ@latest
+	# cosmtrek/air was renamed; the old path no longer receives updates.
+	@go install github.com/air-verse/air@latest
+	# Pinned to the templ version in go.mod: generated code must match the
+	# runtime it is compiled against.
+	@go install github.com/a-h/templ/cmd/templ@v0.3.977
 	@go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 	@echo "Tools installed successfully!"
 
 run:
-	@go run cmd/api/main.go
+	@go run ./cmd/api
 
 lint:
 	@golangci-lint run ./...
