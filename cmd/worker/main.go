@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/orchids/video-streaming/internal/config"
-	"github.com/orchids/video-streaming/internal/queue"
-	"github.com/orchids/video-streaming/internal/repository/postgres"
-	"github.com/orchids/video-streaming/internal/service"
-	"github.com/orchids/video-streaming/pkg/logger"
+	"github.com/Nuu-maan/video-streaming-service/internal/config"
+	"github.com/Nuu-maan/video-streaming-service/internal/queue"
+	"github.com/Nuu-maan/video-streaming-service/internal/repository/postgres"
+	"github.com/Nuu-maan/video-streaming-service/internal/service"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 )
 
 func main() {
@@ -62,10 +62,16 @@ func main() {
 				"low":      1,
 			},
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
-				log.Error(ctx, "task execution failed", map[string]interface{}{
+				// The task ID comes from the context, not from ResultWriter().
+				// A task handed to the error handler has no result writer, so
+				// calling task.ResultWriter().TaskID() here nil-dereferences —
+				// and because this runs on asynq's own goroutine, the panic
+				// took down the entire worker process on the first failed job.
+				taskID, _ := asynq.GetTaskID(ctx)
+
+				log.Error(ctx, "task execution failed", err, map[string]interface{}{
 					"task_type": task.Type(),
-					"task_id":   task.ResultWriter().TaskID(),
-					"error":     err.Error(),
+					"task_id":   taskID,
 					"payload":   string(task.Payload()),
 				})
 			}),
