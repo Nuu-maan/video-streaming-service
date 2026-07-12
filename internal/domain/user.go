@@ -9,26 +9,53 @@ import (
 	"github.com/google/uuid"
 )
 
+// User is a registered account.
+//
+// Secrets carry `json:"-"`. Without it, any handler that returns a User — the
+// auth response, an admin user listing — would serialize the bcrypt hash and
+// the live password-reset token straight to the client.
 type User struct {
-	ID                      uuid.UUID
-	Username                string
-	Email                   string
-	PasswordHash            string
-	FullName                *string
-	Bio                     *string
-	AvatarURL               *string
-	Role                    Role
-	EmailVerified           bool
-	EmailVerificationToken  *uuid.UUID
-	PasswordResetToken      *uuid.UUID
-	PasswordResetExpiry     *time.Time
-	LastLoginAt             *time.Time
-	OAuthProvider           *string
-	OAuthProviderID         *string
-	OAuthAvatarURL          *string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	DeletedAt               *time.Time
+	ID                     uuid.UUID  `json:"id"`
+	Username               string     `json:"username"`
+	Email                  string     `json:"email"`
+	PasswordHash           string     `json:"-"`
+	FullName               *string    `json:"full_name,omitempty"`
+	Bio                    *string    `json:"bio,omitempty"`
+	AvatarURL              *string    `json:"avatar_url,omitempty"`
+	Role                   Role       `json:"role"`
+	EmailVerified          bool       `json:"email_verified"`
+	EmailVerificationToken *uuid.UUID `json:"-"`
+	PasswordResetToken     *uuid.UUID `json:"-"`
+	PasswordResetExpiry    *time.Time `json:"-"`
+	LastLoginAt            *time.Time `json:"last_login_at,omitempty"`
+	OAuthProvider          *string    `json:"oauth_provider,omitempty"`
+	OAuthProviderID        *string    `json:"-"`
+	OAuthAvatarURL         *string    `json:"oauth_avatar_url,omitempty"`
+
+	// Moderation state, from migration 7. BanExpiry is nil for a permanent ban,
+	// so a nil expiry must never be read as "already expired".
+	IsBanned  bool       `json:"is_banned"`
+	BanReason *string    `json:"ban_reason,omitempty"`
+	BanExpiry *time.Time `json:"ban_expiry,omitempty"`
+	BannedAt  *time.Time `json:"banned_at,omitempty"`
+	BannedBy  *uuid.UUID `json:"-"`
+
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"-"`
+}
+
+// IsCurrentlyBanned reports whether the user is banned right now. A temporary
+// ban whose expiry has passed is no longer in force even though is_banned is
+// still true in the row.
+func (u *User) IsCurrentlyBanned() bool {
+	if !u.IsBanned {
+		return false
+	}
+	if u.BanExpiry == nil {
+		return true // permanent
+	}
+	return time.Now().Before(*u.BanExpiry)
 }
 
 var (
