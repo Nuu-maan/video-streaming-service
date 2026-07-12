@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" width="900" height="260" role="img" aria-label="Pipeline: client uploads to the API, which records the video and enqueues a job on Redis; the worker consumes it, transcodes with FFmpeg into a quality ladder, and writes HLS segments served back to the player">
+  <title>Upload → queue → transcode → HLS</title>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrowHead"/>
+    </marker>
+
+    <!-- The path a job travels. Referenced by the moving pulses below. -->
+    <path id="flow" d="M118,86 H262 M382,86 H526 M586,124 V170 M526,196 H382 M262,196 H140" fill="none"/>
+  </defs>
+
+  <style>
+    .bg        { fill: #ffffff; }
+    .node      { fill: #f7f9fc; stroke: #d8dee6; }
+    .nodeAccent{ fill: #eef4ff; stroke: #b9d2ff; }
+    .label     { fill: #10131a; font: 600 14px ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+    .meta      { fill: #6b7480; font: 400 11px ui-monospace, Consolas, monospace; }
+    .wire      { stroke: #c4ccd6; stroke-width: 2; fill: none; }
+    .arrowHead { fill: #c4ccd6; }
+    .caption   { fill: #8b949e; font: 400 12px ui-sans-serif, system-ui, sans-serif; }
+
+    @media (prefers-color-scheme: dark) {
+      .bg        { fill: #0d1117; }
+      .node      { fill: #161b22; stroke: #30363d; }
+      .nodeAccent{ fill: #17233a; stroke: #2c4a7c; }
+      .label     { fill: #e9eef5; }
+      .meta      { fill: #8b949e; }
+      .wire      { stroke: #3d444d; }
+      .arrowHead { fill: #3d444d; }
+      .caption   { fill: #6e7681; }
+    }
+
+    /* A packet of work, travelling the pipeline. Three, staggered, so the
+       pipeline reads as continuously busy rather than one-shot.
+       opacity starts at 0: a pulse with a delayed begin otherwise sits at the
+       origin, fully opaque, as a stray dot in the corner until it starts. */
+    .pulse { r: 5; fill: #4f9cf9; opacity: 0; }
+    @media (prefers-reduced-motion: reduce) { .pulse { display: none; } }
+  </style>
+
+  <rect class="bg" width="900" height="260" rx="12"/>
+
+  <!-- wires -->
+  <path class="wire" marker-end="url(#arrow)" d="M118,86 H256"/>
+  <path class="wire" marker-end="url(#arrow)" d="M382,86 H520"/>
+  <path class="wire" marker-end="url(#arrow)" d="M586,116 V164"/>
+  <path class="wire" marker-end="url(#arrow)" d="M526,196 H388"/>
+  <path class="wire" marker-end="url(#arrow)" d="M262,196 H146"/>
+
+  <!-- nodes: top row -->
+  <g>
+    <rect class="node" x="18" y="58" width="100" height="56" rx="10"/>
+    <text class="label" x="68" y="82" text-anchor="middle">Client</text>
+    <text class="meta"  x="68" y="99" text-anchor="middle">POST /upload</text>
+  </g>
+
+  <g>
+    <rect class="nodeAccent" x="262" y="58" width="120" height="56" rx="10"/>
+    <text class="label" x="322" y="82" text-anchor="middle">API</text>
+    <text class="meta"  x="322" y="99" text-anchor="middle">validate · record</text>
+  </g>
+
+  <g>
+    <rect class="node" x="526" y="58" width="120" height="56" rx="10"/>
+    <text class="label" x="586" y="82" text-anchor="middle">Redis</text>
+    <text class="meta"  x="586" y="99" text-anchor="middle">asynq queue</text>
+  </g>
+
+  <!-- nodes: bottom row -->
+  <g>
+    <rect class="nodeAccent" x="526" y="168" width="120" height="56" rx="10"/>
+    <text class="label" x="586" y="192" text-anchor="middle">Worker</text>
+    <text class="meta"  x="586" y="209" text-anchor="middle">FFmpeg</text>
+  </g>
+
+  <g>
+    <rect class="node" x="262" y="168" width="126" height="56" rx="10"/>
+    <text class="label" x="325" y="192" text-anchor="middle">Ladder</text>
+    <text class="meta"  x="325" y="209" text-anchor="middle">360 · 480 · 720 · 1080</text>
+  </g>
+
+  <g>
+    <rect class="node" x="18" y="168" width="128" height="56" rx="10"/>
+    <text class="label" x="82" y="192" text-anchor="middle">HLS</text>
+    <text class="meta"  x="82" y="209" text-anchor="middle">master.m3u8 + .ts</text>
+  </g>
+
+  <!-- travelling work packets -->
+  <circle class="pulse">
+    <animateMotion dur="6s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear">
+      <mpath href="#flow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.06;0.94;1" dur="6s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="pulse" fill="#7c5cff">
+    <animateMotion dur="6s" begin="2s" repeatCount="indefinite">
+      <mpath href="#flow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.06;0.94;1" dur="6s" begin="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="pulse" fill="#00c9a7">
+    <animateMotion dur="6s" begin="4s" repeatCount="indefinite">
+      <mpath href="#flow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.06;0.94;1" dur="6s" begin="4s" repeatCount="indefinite"/>
+  </circle>
+
+  <text class="caption" x="450" y="246" text-anchor="middle">
+    the API never transcodes: it records the video and returns, and the worker does the slow work
+  </text>
+</svg>
