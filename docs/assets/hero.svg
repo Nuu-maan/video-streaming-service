@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200" width="900" height="200" role="img" aria-label="Video Streaming Service — Go, HLS adaptive bitrate, background transcoding">
+  <title>Video Streaming Service</title>
+
+  <defs>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#4f9cf9"/>
+      <stop offset="50%"  stop-color="#7c5cff"/>
+      <stop offset="100%" stop-color="#00c9a7"/>
+    </linearGradient>
+
+
+  </defs>
+
+  <style>
+    .bg      { fill: #ffffff; }
+    .title   { fill: #10131a; font: 700 38px ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+    .sub     { fill: #5b6472; font: 400 15px ui-monospace, "Cascadia Code", Consolas, monospace; }
+    .chip    { fill: #f2f4f7; stroke: #dfe3e8; }
+    .chipTxt { fill: #39414d; font: 600 12px ui-sans-serif, system-ui, sans-serif; }
+    .bar     { fill: #e9edf2; }
+
+    @media (prefers-color-scheme: dark) {
+      .bg      { fill: #0d1117; }
+      .title   { fill: #e9eef5; }
+      .sub     { fill: #8b949e; }
+      .chip    { fill: #161b22; stroke: #30363d; }
+      .chipTxt { fill: #c9d1d9; }
+      .bar     { fill: #21262d; }
+    }
+
+    /* Equaliser bars: a video service, quietly playing.
+       transform-box:fill-box anchors each bar to its OWN bottom edge; without it
+       the origin resolves against the whole viewport and the bars drift. */
+    .eq rect { transform-box: fill-box; transform-origin: 50% 100%; }
+    .eq rect:nth-child(1) { animation: eq 1.15s ease-in-out infinite   0ms; }
+    .eq rect:nth-child(2) { animation: eq 0.90s ease-in-out infinite 120ms; }
+    .eq rect:nth-child(3) { animation: eq 1.35s ease-in-out infinite 240ms; }
+    .eq rect:nth-child(4) { animation: eq 1.00s ease-in-out infinite  60ms; }
+    .eq rect:nth-child(5) { animation: eq 1.25s ease-in-out infinite 300ms; }
+    .eq rect:nth-child(6) { animation: eq 0.95s ease-in-out infinite 180ms; }
+    @keyframes eq { 0%,100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+
+    /* Respect users who ask for less motion. */
+    @media (prefers-reduced-motion: reduce) {
+      .eq rect { animation: none; transform: scaleY(0.6); }
+    }
+  </style>
+
+  <rect class="bg" width="900" height="200" rx="14"/>
+
+  <!-- accent rail -->
+  <rect x="0" y="0" width="6" height="200" rx="3" fill="url(#sweep)"/>
+
+  <text class="title" x="48" y="86">Video Streaming Service</text>
+  <text class="sub" x="48" y="116">upload → transcode → HLS adaptive bitrate</text>
+
+  <!-- capability chips -->
+  <g>
+    <rect class="chip" x="48"  y="140" width="66"  height="26" rx="13"/>
+    <text class="chipTxt" x="81"  y="157" text-anchor="middle">Go 1.25</text>
+
+    <rect class="chip" x="122" y="140" width="54"  height="26" rx="13"/>
+    <text class="chipTxt" x="149" y="157" text-anchor="middle">HLS</text>
+
+    <rect class="chip" x="184" y="140" width="74"  height="26" rx="13"/>
+    <text class="chipTxt" x="221" y="157" text-anchor="middle">FFmpeg</text>
+
+    <rect class="chip" x="266" y="140" width="96"  height="26" rx="13"/>
+    <text class="chipTxt" x="314" y="157" text-anchor="middle">PostgreSQL</text>
+
+    <rect class="chip" x="370" y="140" width="62"  height="26" rx="13"/>
+    <text class="chipTxt" x="401" y="157" text-anchor="middle">Redis</text>
+
+    <rect class="chip" x="440" y="140" width="88"  height="26" rx="13"/>
+    <text class="chipTxt" x="484" y="157" text-anchor="middle">JWT + RBAC</text>
+  </g>
+
+  <!-- equaliser -->
+  <g class="eq" transform="translate(700 60)">
+    <rect x="0"   y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+    <rect x="24"  y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+    <rect x="48"  y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+    <rect x="72"  y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+    <rect x="96"  y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+    <rect x="120" y="0" width="14" height="86" rx="7" fill="url(#sweep)"/>
+  </g>
+</svg>
