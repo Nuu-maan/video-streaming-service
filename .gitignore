@@ -17,4 +17,8 @@ vendor/
 *.swo
 *~
 tmp/
-.orchids/
+
+# Uploaded and transcoded media: keep the directories, not the contents.
+web/uploads/**
+!web/uploads/**/
+!web/uploads/**/.gitkeep
