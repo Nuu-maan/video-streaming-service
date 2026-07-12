@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/orchids/video-streaming/internal/domain"
 )
 
 type AuditLogRepository struct {
@@ -70,6 +71,25 @@ func (r *AuditLogRepository) GetRecent(ctx context.Context, limit, offset int) (
 	}
 
 	return logs, nil
+}
+
+// Count returns the total number of audit log entries, so a paginated listing
+// can report an accurate total alongside the current page.
+func (r *AuditLogRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting audit logs: %w", err)
+	}
+	return count, nil
+}
+
+// CountByUser returns the total number of audit log entries for one user.
+func (r *AuditLogRepository) CountByUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var count int64
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM audit_logs WHERE user_id = $1`, userID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting audit logs for user %s: %w", userID, err)
+	}
+	return count, nil
 }
 
 func (r *AuditLogRepository) GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.AuditLog, error) {
