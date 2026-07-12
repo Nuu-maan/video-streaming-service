@@ -9,8 +9,41 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ViewTrackerRepository is the slice of the analytics store this tracker needs.
+// Satisfied by *postgres.AnalyticsRepository.
+//
+// RecordView does not take a watch duration: a view is durable the moment it
+// starts, and the duration is only known once playback ends. The repository
+// fills watch_duration/watch_percent afterwards via UpdateViewDuration.
 type ViewTrackerRepository interface {
-	RecordView(ctx context.Context, videoID, userID uuid.UUID, watchDuration int64) error
+	RecordView(ctx context.Context, videoID, userID *uuid.UUID, sessionID, ipAddress, userAgent, quality, deviceType, country, source string) error
+}
+
+// ViewEvent is one playback start, as recorded in video_views. UserID is nil for
+// an anonymous viewer, who is identified by SessionID instead.
+type ViewEvent struct {
+	VideoID    uuid.UUID
+	UserID     *uuid.UUID
+	SessionID  string
+	IPAddress  string
+	UserAgent  string
+	Quality    string
+	DeviceType string
+	Country    string
+	Source     string
+}
+
+// viewer returns the identity used to count this event towards active viewers:
+// the user ID when signed in, otherwise the session ID. It reports false when
+// the event carries neither, in which case the viewer cannot be counted.
+func (e ViewEvent) viewer() (string, bool) {
+	if e.UserID != nil && *e.UserID != uuid.Nil {
+		return e.UserID.String(), true
+	}
+	if e.SessionID != "" {
+		return e.SessionID, true
+	}
+	return "", false
 }
 
 type ViewTracker struct {
@@ -25,8 +58,13 @@ func NewViewTracker(repo ViewTrackerRepository, redisClient *redis.Client) *View
 	}
 }
 
-func (vt *ViewTracker) RecordView(ctx context.Context, videoID, userID uuid.UUID, watchDuration int64) error {
-	if err := vt.repo.RecordView(ctx, videoID, userID, watchDuration); err != nil {
+func (vt *ViewTracker) RecordView(ctx context.Context, event ViewEvent) error {
+	videoID := event.VideoID
+
+	if err := vt.repo.RecordView(ctx, &videoID, event.UserID,
+		event.SessionID, event.IPAddress, event.UserAgent,
+		event.Quality, event.DeviceType, event.Country, event.Source,
+	); err != nil {
 		return fmt.Errorf("failed to record view in database: %w", err)
 	}
 
@@ -46,12 +84,15 @@ func (vt *ViewTracker) RecordView(ctx context.Context, videoID, userID uuid.UUID
 	pipe.Expire(ctx, hourKey, 1*time.Hour)
 
 	activeViewersKey := fmt.Sprintf("active_viewers:%s", videoID)
-	pipe.ZAdd(ctx, activeViewersKey, redis.Z{
-		Score:  float64(now.Unix()),
-		Member: userID.String(),
-	})
-
 	fiveMinutesAgo := now.Add(-5 * time.Minute).Unix()
+
+	if viewer, ok := event.viewer(); ok {
+		pipe.ZAdd(ctx, activeViewersKey, redis.Z{
+			Score:  float64(now.Unix()),
+			Member: viewer,
+		})
+	}
+
 	pipe.ZRemRangeByScore(ctx, activeViewersKey, "0", fmt.Sprintf("%d", fiveMinutesAgo))
 
 	_, err := pipe.Exec(ctx)

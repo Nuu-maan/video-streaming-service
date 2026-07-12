@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/google/uuid"
-	"github.com/orchids/video-streaming/internal/domain"
 	"github.com/redis/go-redis/v9"
 )
 
