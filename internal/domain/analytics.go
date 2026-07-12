@@ -29,32 +29,32 @@ type DashboardStats struct {
 }
 
 type VideoAnalytics struct {
-	VideoID          uuid.UUID
-	Title            string
-	UserID           uuid.UUID
-	Username         string
-	TotalViews       int64
-	UniqueViewers    int64
-	Likes            int64
-	Dislikes         int64
-	Comments         int64
-	Shares           int64
-	TotalWatchTime   int64
-	AvgWatchTime     float64
-	AvgWatchPercent  float64
-	ViewsByQuality   map[string]int64
-	AvgBufferTime    float64
-	PlaybackErrors   int64
-	SourceDirect     int64
-	SourceSearch     int64
-	SourceEmbed      int64
-	SourceSocial     int64
-	TopCountries     []CountryStats
-	DeviceMobile     int64
-	DeviceDesktop    int64
-	DeviceTablet     int64
-	CreatedAt        time.Time
-	LastViewed       time.Time
+	VideoID         uuid.UUID
+	Title           string
+	UserID          uuid.UUID
+	Username        string
+	TotalViews      int64
+	UniqueViewers   int64
+	Likes           int64
+	Dislikes        int64
+	Comments        int64
+	Shares          int64
+	TotalWatchTime  int64
+	AvgWatchTime    float64
+	AvgWatchPercent float64
+	ViewsByQuality  map[string]int64
+	AvgBufferTime   float64
+	PlaybackErrors  int64
+	SourceDirect    int64
+	SourceSearch    int64
+	SourceEmbed     int64
+	SourceSocial    int64
+	TopCountries    []CountryStats
+	DeviceMobile    int64
+	DeviceDesktop   int64
+	DeviceTablet    int64
+	CreatedAt       time.Time
+	LastViewed      time.Time
 }
 
 type CountryStats struct {
@@ -89,12 +89,12 @@ type DataPoint struct {
 }
 
 type RealtimeMetrics struct {
-	ActiveViewers     int64
-	UploadsLastHour   int64
-	ViewsLastHour     int64
-	CurrentCPU        float64
-	CurrentMemory     float64
-	QueuedJobs        int64
-	ProcessingJobs    int64
-	Timestamp         time.Time
+	ActiveViewers   int64
+	UploadsLastHour int64
+	ViewsLastHour   int64
+	CurrentCPU      float64
+	CurrentMemory   float64
+	QueuedJobs      int64
+	ProcessingJobs  int64
+	Timestamp       time.Time
 }

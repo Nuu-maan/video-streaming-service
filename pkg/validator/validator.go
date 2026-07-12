@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -11,11 +12,11 @@ import (
 )
 
 var (
-	ErrFileTooLarge   = fmt.Errorf("file size exceeds maximum allowed size")
-	ErrInvalidFormat  = fmt.Errorf("invalid file format")
-	ErrInvalidTitle   = fmt.Errorf("invalid title")
-	ErrCorruptVideo   = fmt.Errorf("corrupt or invalid video file")
-	ErrInvalidUUID    = fmt.Errorf("invalid UUID format")
+	ErrFileTooLarge      = fmt.Errorf("file size exceeds maximum allowed size")
+	ErrInvalidFormat     = fmt.Errorf("invalid file format")
+	ErrInvalidTitle      = fmt.Errorf("invalid title")
+	ErrCorruptVideo      = fmt.Errorf("corrupt or invalid video file")
+	ErrInvalidUUID       = fmt.Errorf("invalid UUID format")
 	ErrInvalidPagination = fmt.Errorf("invalid pagination parameters")
 )
 
@@ -27,11 +28,17 @@ var allowedExtensions = map[string]bool{
 	".webm": true,
 }
 
-var videoMagicBytes = map[string][]byte{
-	"mp4":  {0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70}, // ftyp
-	"webm": {0x1A, 0x45, 0xDF, 0xA3},                         // EBML
-	"avi":  {0x52, 0x49, 0x46, 0x46},                         // RIFF
-}
+// Container signatures, in the byte order they appear at the head of the file.
+var (
+	// magicEBML starts every Matroska and WebM file (.mkv, .webm).
+	magicEBML = []byte{0x1A, 0x45, 0xDF, 0xA3}
+	// magicRIFF and magicAVI bracket the AVI form type: "RIFF????AVI ".
+	magicRIFF = []byte{'R', 'I', 'F', 'F'}
+	magicAVI  = []byte{'A', 'V', 'I', ' '}
+	// magicFTYP is the ISO Base Media File Format brand box, shared by .mp4,
+	// .mov, and .m4v. It sits at offset 4, after a 4-byte box size.
+	magicFTYP = []byte{'f', 't', 'y', 'p'}
+)
 
 func ValidateVideoFile(file multipart.File, header *multipart.FileHeader, maxSize int64) error {
 	if header.Size > maxSize {
@@ -52,7 +59,7 @@ func ValidateVideoFile(file multipart.File, header *multipart.FileHeader, maxSiz
 	if err != nil && err != io.EOF {
 		return fmt.Errorf("failed to read file header: %w", err)
 	}
-	
+
 	if _, err := file.Seek(0, 0); err != nil {
 		return fmt.Errorf("failed to reset file pointer: %w", err)
 	}
@@ -64,26 +71,25 @@ func ValidateVideoFile(file multipart.File, header *multipart.FileHeader, maxSiz
 	return nil
 }
 
+// isVideoFile reports whether buf begins with a recognised video container
+// signature.
+//
+// The ISO-BMFF check matches "ftyp" at offset 4 and ignores the four preceding
+// box-size bytes. The previous version required those bytes to be exactly
+// 00 00 00 18, which is only one of many legal box sizes — so most real-world
+// .mp4 files were rejected as corrupt. It also had no signature at all for .mov
+// (an ISO-BMFF format), even though .mov is in the extension allowlist, making
+// every .mov upload fail. Matroska (.mkv) shares the EBML signature with WebM.
 func isVideoFile(buf []byte) bool {
-	if len(buf) < 8 {
-		return false
+	if len(buf) >= 8 && bytes.Equal(buf[4:8], magicFTYP) {
+		return true // mp4, mov, m4v
 	}
-
-	for _, magic := range videoMagicBytes {
-		if len(buf) >= len(magic) {
-			match := true
-			for i, b := range magic {
-				if buf[i] != b {
-					match = false
-					break
-				}
-			}
-			if match {
-				return true
-			}
-		}
+	if bytes.HasPrefix(buf, magicEBML) {
+		return true // mkv, webm
 	}
-
+	if len(buf) >= 12 && bytes.HasPrefix(buf, magicRIFF) && bytes.Equal(buf[8:12], magicAVI) {
+		return true // avi
+	}
 	return false
 }
 

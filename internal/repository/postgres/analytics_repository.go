@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/orchids/video-streaming/internal/domain"
 )
 
 type AnalyticsRepository struct {
@@ -117,7 +119,12 @@ func (r *AnalyticsRepository) GetVideoAnalytics(ctx context.Context, videoID uui
 		&analytics.LastViewed,
 	)
 	if err != nil {
-		return nil, err
+		// Analytics for a video that does not exist is a client mistake, so it has
+		// to be distinguishable from a real query failure by the HTTP layer.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrVideoNotFound
+		}
+		return nil, fmt.Errorf("getting analytics for video %s: %w", videoID, err)
 	}
 
 	qualityStats, err := r.GetPopularQualities(ctx, videoID)
@@ -375,6 +382,47 @@ func (r *AnalyticsRepository) GetGeographyStats(ctx context.Context, videoID uui
 	}
 
 	return countries, nil
+}
+
+// GetRealtimeMetrics reports the last-hour activity snapshot the admin dashboard
+// polls for.
+//
+// A viewer counts as active if they produced a video_views row in the last five
+// minutes; anonymous viewers have a NULL user_id, so they are identified by
+// session_id instead and each distinct session counts once.
+//
+// CurrentCPU and CurrentMemory are deliberately left at zero: they are process
+// metrics, not database state, and nothing in the schema records them. The
+// monitoring service is the source for those.
+func (r *AnalyticsRepository) GetRealtimeMetrics(ctx context.Context) (*domain.RealtimeMetrics, error) {
+	query := `
+	SELECT
+		(SELECT COUNT(DISTINCT COALESCE(user_id::text, session_id))
+		   FROM video_views
+		  WHERE created_at >= NOW() - INTERVAL '5 minutes'
+		    AND (user_id IS NOT NULL OR session_id IS NOT NULL)) AS active_viewers,
+		(SELECT COUNT(*) FROM videos
+		  WHERE created_at >= NOW() - INTERVAL '1 hour') AS uploads_last_hour,
+		(SELECT COUNT(*) FROM video_views
+		  WHERE created_at >= NOW() - INTERVAL '1 hour') AS views_last_hour,
+		(SELECT COUNT(*) FROM videos WHERE status = $1) AS queued_jobs,
+		(SELECT COUNT(*) FROM videos WHERE status = $2) AS processing_jobs
+	`
+
+	metrics := &domain.RealtimeMetrics{}
+	err := r.db.QueryRow(ctx, query, domain.VideoStatusUploading, domain.VideoStatusProcessing).Scan(
+		&metrics.ActiveViewers,
+		&metrics.UploadsLastHour,
+		&metrics.ViewsLastHour,
+		&metrics.QueuedJobs,
+		&metrics.ProcessingJobs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("getting realtime metrics: %w", err)
+	}
+
+	metrics.Timestamp = time.Now()
+	return metrics, nil
 }
 
 func (r *AnalyticsRepository) RecordView(ctx context.Context, videoID, userID *uuid.UUID, sessionID, ipAddress, userAgent, quality, deviceType, country, source string) error {

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchids/video-streaming/pkg/logger"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 )
 
 type VideoMetadata struct {
@@ -65,10 +65,10 @@ func (s *FFmpegService) ExtractMetadata(ctx context.Context, filePath string) (*
 			Format   string `json:"format_name"`
 		} `json:"format"`
 		Streams []struct {
-			CodecType string `json:"codec_type"`
-			CodecName string `json:"codec_name"`
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
+			CodecType  string `json:"codec_type"`
+			CodecName  string `json:"codec_name"`
+			Width      int    `json:"width"`
+			Height     int    `json:"height"`
 			RFrameRate string `json:"r_frame_rate"`
 		} `json:"streams"`
 	}
@@ -94,7 +94,7 @@ func (s *FFmpegService) ExtractMetadata(ctx context.Context, filePath string) (*
 			metadata.VideoCodec = stream.CodecName
 			metadata.Width = stream.Width
 			metadata.Height = stream.Height
-			
+
 			if stream.RFrameRate != "" && strings.Contains(stream.RFrameRate, "/") {
 				parts := strings.Split(stream.RFrameRate, "/")
 				if len(parts) == 2 {

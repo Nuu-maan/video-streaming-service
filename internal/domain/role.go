@@ -64,7 +64,7 @@ func (r Role) HasPermission(permission Permission) bool {
 	if !ok {
 		return false
 	}
-	
+
 	for _, p := range permissions {
 		if p == permission {
 			return true

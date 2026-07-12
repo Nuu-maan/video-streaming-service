@@ -8,15 +8,15 @@ import (
 )
 
 type VideoQuality struct {
-	Name       string
-	Width      int
-	Height     int
-	Bitrate    string
-	MaxRate    string
-	BufSize    string
-	AudioRate  string
-	CRF        int
-	Preset     string
+	Name      string
+	Width     int
+	Height    int
+	Bitrate   string
+	MaxRate   string
+	BufSize   string
+	AudioRate string
+	CRF       int
+	Preset    string
 }
 
 var QualityPresets = map[string]VideoQuality{

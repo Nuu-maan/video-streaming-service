@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,10 +12,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ErrCacheMiss reports that a key is absent. It is a normal outcome, not a
+// failure: callers should fall through to the origin, not surface an error.
+var ErrCacheMiss = errors.New("cache miss")
+
 type CacheOptions struct {
 	TTL        time.Duration
 	LocalCache bool
-	Compress   bool
 }
 
 type CacheService struct {
@@ -23,11 +27,19 @@ type CacheService struct {
 	defaultTTL time.Duration
 }
 
+// LocalCache is the in-process L1 tier in front of Redis.
+//
+// Occupancy is len(items) rather than a hand-maintained counter. The previous
+// version incremented a size field on every Set, including overwrites of an
+// existing key, so the count drifted permanently above the real item count and
+// the cache began evicting live entries while nominally under its limit.
 type LocalCache struct {
 	mu    sync.RWMutex
 	items map[string]*cacheItem
-	size  int
 	max   int
+
+	stop chan struct{}
+	once sync.Once
 }
 
 type cacheItem struct {
@@ -35,10 +47,15 @@ type cacheItem struct {
 	expiresAt time.Time
 }
 
+func (i *cacheItem) expired(now time.Time) bool {
+	return now.After(i.expiresAt)
+}
+
 func NewCacheService(redisClient *redis.Client, localCacheSize int) *CacheService {
 	local := &LocalCache{
-		items: make(map[string]*cacheItem),
+		items: make(map[string]*cacheItem, localCacheSize),
 		max:   localCacheSize,
+		stop:  make(chan struct{}),
 	}
 
 	go local.cleanup()
@@ -50,33 +67,50 @@ func NewCacheService(redisClient *redis.Client, localCacheSize int) *CacheServic
 	}
 }
 
+// Close stops the background eviction goroutine. Without it the goroutine
+// outlives the cache for the life of the process.
+func (c *CacheService) Close() {
+	c.local.close()
+}
+
+func (l *LocalCache) close() {
+	l.once.Do(func() { close(l.stop) })
+}
+
 func (l *LocalCache) cleanup() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		l.mu.Lock()
-		now := time.Now()
-		for key, item := range l.items {
-			if now.After(item.expiresAt) {
-				delete(l.items, key)
-				l.size--
+	for {
+		select {
+		case <-l.stop:
+			return
+		case now := <-ticker.C:
+			l.mu.Lock()
+			for key, item := range l.items {
+				if item.expired(now) {
+					delete(l.items, key)
+				}
 			}
+			l.mu.Unlock()
 		}
-		l.mu.Unlock()
 	}
 }
 
 func (l *LocalCache) Get(key string) ([]byte, bool) {
 	l.mu.RLock()
-	defer l.mu.RUnlock()
-
 	item, exists := l.items[key]
+	l.mu.RUnlock()
+
 	if !exists {
 		return nil, false
 	}
 
-	if time.Now().After(item.expiresAt) {
+	if item.expired(time.Now()) {
+		// Drop it now rather than waiting for the sweep; otherwise an expired
+		// entry keeps occupying a slot and can be chosen as the eviction victim
+		// ahead of live ones.
+		l.Delete(key)
 		return nil, false
 	}
 
@@ -87,36 +121,51 @@ func (l *LocalCache) Set(key string, value []byte, ttl time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.size >= l.max {
-		oldest := ""
-		oldestTime := time.Now().Add(time.Hour)
-		for k, v := range l.items {
-			if v.expiresAt.Before(oldestTime) {
-				oldest = k
-				oldestTime = v.expiresAt
-			}
-		}
-		if oldest != "" {
-			delete(l.items, oldest)
-			l.size--
-		}
+	// Only an insert can push the cache over its limit; overwriting an existing
+	// key does not grow it.
+	if _, exists := l.items[key]; !exists && len(l.items) >= l.max {
+		l.evictOldestLocked()
 	}
 
 	l.items[key] = &cacheItem{
 		value:     value,
 		expiresAt: time.Now().Add(ttl),
 	}
-	l.size++
+}
+
+// evictOldestLocked removes the entry closest to expiry. The caller must hold
+// the write lock.
+//
+// "Found nothing yet" is tracked with a bool rather than by treating the empty
+// string as a sentinel: "" is a legal map key, and overloading it would both
+// skip evicting such an entry and let it be re-selected spuriously.
+func (l *LocalCache) evictOldestLocked() {
+	var (
+		victim   string
+		earliest time.Time
+		found    bool
+	)
+	for key, item := range l.items {
+		if !found || item.expiresAt.Before(earliest) {
+			victim, earliest, found = key, item.expiresAt, true
+		}
+	}
+	if found {
+		delete(l.items, victim)
+	}
 }
 
 func (l *LocalCache) Delete(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	delete(l.items, key)
+}
 
-	if _, exists := l.items[key]; exists {
-		delete(l.items, key)
-		l.size--
-	}
+// Len reports the number of entries currently held.
+func (l *LocalCache) Len() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.items)
 }
 
 func (c *CacheService) Get(ctx context.Context, key string) ([]byte, error) {
@@ -194,13 +243,18 @@ func (c *CacheService) DeletePattern(ctx context.Context, pattern string) error 
 	return nil
 }
 
+// GetJSON decodes the cached value for key into dest.
+//
+// A miss returns ErrCacheMiss. It previously returned a nil error without
+// touching dest, so callers could not tell a hit from a miss and would treat the
+// zero value as though it had been cached.
 func (c *CacheService) GetJSON(ctx context.Context, key string, dest interface{}) error {
 	data, err := c.Get(ctx, key)
 	if err != nil {
 		return err
 	}
 	if data == nil {
-		return nil
+		return ErrCacheMiss
 	}
 
 	return json.Unmarshal(data, dest)

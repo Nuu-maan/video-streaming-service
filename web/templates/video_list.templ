@@ -1,9 +1,8 @@
 package templates
 
 import (
-	"github.com/orchids/video-streaming/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"fmt"
-	"time"
 )
 
 templ VideoListPage(videos []*domain.Video) {
@@ -63,9 +62,9 @@ templ VideoCard(video *domain.Video) {
 			
 			<div class="flex items-center space-x-4 mb-3">
 				@StatusBadge(video.Status)
-				if video.Duration != nil {
+				if video.Duration > 0 {
 					<span class="text-sm text-gray-400">
-						{ formatDuration(*video.Duration) }
+						{ formatDuration(video.Duration) }
 					</span>
 				}
 			</div>
@@ -90,47 +89,4 @@ templ StatusBadge(status domain.VideoStatus) {
 	</span>
 }
 
-func statusBadgeClass(status domain.VideoStatus) string {
-	switch status {
-	case domain.StatusReady:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-600/30 text-green-200 border border-green-500/30"
-	case domain.StatusProcessing:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-600/30 text-yellow-200 border border-yellow-500/30"
-	case domain.StatusFailed:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-600/30 text-red-200 border border-red-500/30"
-	default:
-		return "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-600/30 text-gray-200 border border-gray-500/30"
-	}
-}
-
-func formatDuration(seconds float64) string {
-	minutes := int(seconds) / 60
-	secs := int(seconds) % 60
-	return fmt.Sprintf("%d:%02d", minutes, secs)
-}
-
-func formatTimeAgo(t time.Time) string {
-	diff := time.Since(t)
-	
-	if diff < time.Minute {
-		return "just now"
-	} else if diff < time.Hour {
-		mins := int(diff.Minutes())
-		if mins == 1 {
-			return "1 minute ago"
-		}
-		return fmt.Sprintf("%d minutes ago", mins)
-	} else if diff < 24*time.Hour {
-		hours := int(diff.Hours())
-		if hours == 1 {
-			return "1 hour ago"
-		}
-		return fmt.Sprintf("%d hours ago", hours)
-	} else {
-		days := int(diff.Hours() / 24)
-		if days == 1 {
-			return "1 day ago"
-		}
-		return fmt.Sprintf("%d days ago", days)
-	}
-}
+// statusBadgeClass, formatDuration and formatTimeAgo live in helpers.go.

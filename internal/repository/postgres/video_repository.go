@@ -4,68 +4,52 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/orchids/video-streaming/internal/domain"
+
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/repository"
 )
 
+// videoColumns is the single source of truth for the SELECT list. The three
+// previous listing queries each hand-wrote their own column list, and two of
+// them silently omitted the HLS columns, so a video fetched by search reported
+// HLSReady=false regardless of its real state.
+const videoColumns = `
+	id, user_id, title, description, filename, file_path, file_size, mime_type,
+	duration, original_resolution, thumbnail_path, status, visibility,
+	transcoding_progress, available_qualities, hls_master_path, hls_ready,
+	streaming_protocol, created_at, updated_at, processed_at`
+
+// PostgresVideoRepository is the PostgreSQL implementation of
+// repository.VideoRepository.
 type PostgresVideoRepository struct {
 	pool *pgxpool.Pool
 }
 
+// Compile-time proof that the implementation satisfies the interface. Without
+// this, a drifting method set only surfaces at the call site.
+var _ repository.VideoRepository = (*PostgresVideoRepository)(nil)
+
 func NewPostgresVideoRepository(pool *pgxpool.Pool) *PostgresVideoRepository {
-	return &PostgresVideoRepository{
-		pool: pool,
-	}
+	return &PostgresVideoRepository{pool: pool}
 }
 
-func (r *PostgresVideoRepository) Create(ctx context.Context, video *domain.Video) error {
-	query := `
-		INSERT INTO videos (
-			id, title, description, filename, file_path, file_size, mime_type,
-			duration, original_resolution, status, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-		)
-	`
-
-	_, err := r.pool.Exec(ctx, query,
-		video.ID,
-		video.Title,
-		video.Description,
-		video.Filename,
-		video.FilePath,
-		video.FileSize,
-		video.MimeType,
-		video.Duration,
-		video.OriginalResolution,
-		video.Status,
-		video.CreatedAt,
-		video.UpdatedAt,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to create video: %w", err)
-	}
-
-	return nil
+// scanner is satisfied by both pgx.Row and pgx.Rows, so one scan helper serves
+// single-row and multi-row queries alike.
+type scanner interface {
+	Scan(dest ...any) error
 }
 
-func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Video, error) {
-	query := `
-		SELECT id, title, description, filename, file_path, file_size, mime_type,
-			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, hls_master_path, hls_ready, streaming_protocol,
-			   created_at, updated_at, processed_at
-		FROM videos
-		WHERE id = $1
-	`
-
+// scanVideo reads one row in videoColumns order.
+func scanVideo(row scanner) (*domain.Video, error) {
 	var video domain.Video
-	err := r.pool.QueryRow(ctx, query, id).Scan(
+	err := row.Scan(
 		&video.ID,
+		&video.UserID,
 		&video.Title,
 		&video.Description,
 		&video.Filename,
@@ -76,6 +60,7 @@ func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*d
 		&video.OriginalResolution,
 		&video.ThumbnailPath,
 		&video.Status,
+		&video.Visibility,
 		&video.TranscodingProgress,
 		&video.AvailableQualities,
 		&video.HLSMasterPath,
@@ -85,313 +70,183 @@ func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*d
 		&video.UpdatedAt,
 		&video.ProcessedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	return &video, nil
+}
 
+func (r *PostgresVideoRepository) Create(ctx context.Context, video *domain.Video) error {
+	const query = `
+		INSERT INTO videos (
+			id, user_id, title, description, filename, file_path, file_size,
+			mime_type, duration, original_resolution, status, visibility,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+
+	_, err := r.pool.Exec(ctx, query,
+		video.ID,
+		video.UserID,
+		video.Title,
+		video.Description,
+		video.Filename,
+		video.FilePath,
+		video.FileSize,
+		video.MimeType,
+		video.Duration,
+		video.OriginalResolution,
+		video.Status,
+		video.Visibility,
+		video.CreatedAt,
+		video.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("creating video: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresVideoRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Video, error) {
+	// The space before FROM is load-bearing: videoColumns has no trailing
+	// whitespace, so without it the last column and FROM fuse into
+	// "processed_atFROM", which Postgres reads as a column alias — leaving the
+	// statement with no FROM clause at all.
+	query := `SELECT` + videoColumns + ` FROM videos WHERE id = $1`
+
+	video, err := scanVideo(r.pool.QueryRow(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrVideoNotFound
 		}
-		return nil, fmt.Errorf("failed to get video: %w", err)
+		return nil, fmt.Errorf("getting video %s: %w", id, err)
 	}
-
-	return &video, nil
+	return video, nil
 }
 
-func (r *PostgresVideoRepository) List(ctx context.Context, limit, offset int) ([]*domain.Video, error) {
-	query := `
-		SELECT id, title, description, filename, file_path, file_size, mime_type,
-			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, hls_master_path, hls_ready, streaming_protocol,
-			   created_at, updated_at, processed_at
-		FROM videos
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+// buildFilter renders a VideoFilter into a WHERE clause and its arguments.
+// Arguments are always bound as placeholders; no filter value is ever
+// interpolated into the SQL text.
+func buildFilter(filter repository.VideoFilter) (where string, args []any) {
+	var conditions []string
 
-	rows, err := r.pool.Query(ctx, query, limit, offset)
+	if filter.Status != nil {
+		args = append(args, *filter.Status)
+		conditions = append(conditions, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if filter.OwnerID != nil {
+		args = append(args, *filter.OwnerID)
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)))
+	}
+	if filter.Visibility != nil {
+		args = append(args, *filter.Visibility)
+		conditions = append(conditions, fmt.Sprintf("visibility = $%d", len(args)))
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		// Uses the search_vector GIN index added in migration 8. The old query
+		// was an unanchored ILIKE '%...%', which cannot use an index and forced
+		// a sequential scan of the table on every search.
+		args = append(args, search)
+		conditions = append(conditions, fmt.Sprintf("search_vector @@ plainto_tsquery('english', $%d)", len(args)))
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func (r *PostgresVideoRepository) List(ctx context.Context, filter repository.VideoFilter, page repository.Page) ([]*domain.Video, error) {
+	where, args := buildFilter(filter)
+
+	query := fmt.Sprintf(
+		`SELECT %s FROM videos%s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`,
+		videoColumns, where, len(args)+1, len(args)+2,
+	)
+	args = append(args, page.Limit, page.Offset)
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list videos: %w", err)
+		return nil, fmt.Errorf("listing videos: %w", err)
 	}
 	defer rows.Close()
 
-	var videos []*domain.Video
+	videos := make([]*domain.Video, 0, page.Limit)
 	for rows.Next() {
-		var video domain.Video
-		err := rows.Scan(
-			&video.ID,
-			&video.Title,
-			&video.Description,
-			&video.Filename,
-			&video.FilePath,
-			&video.FileSize,
-			&video.MimeType,
-			&video.Duration,
-			&video.OriginalResolution,
-			&video.ThumbnailPath,
-			&video.Status,
-			&video.TranscodingProgress,
-			&video.AvailableQualities,
-			&video.HLSMasterPath,
-			&video.HLSReady,
-			&video.StreamingProtocol,
-			&video.CreatedAt,
-			&video.UpdatedAt,
-			&video.ProcessedAt,
-		)
+		video, err := scanVideo(rows)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan video: %w", err)
+			return nil, fmt.Errorf("scanning video: %w", err)
 		}
-		videos = append(videos, &video)
+		videos = append(videos, video)
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating videos: %w", err)
+		return nil, fmt.Errorf("iterating videos: %w", err)
 	}
-
 	return videos, nil
 }
 
-func (r *PostgresVideoRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.VideoStatus) error {
-	query := `
-		UPDATE videos
-		SET status = $1, updated_at = NOW()
-		WHERE id = $2
-	`
+func (r *PostgresVideoRepository) Count(ctx context.Context, filter repository.VideoFilter) (int, error) {
+	where, args := buildFilter(filter)
 
-	result, err := r.pool.Exec(ctx, query, status, id)
-	if err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+	var count int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM videos`+where, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting videos: %w", err)
 	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
-}
-
-func (r *PostgresVideoRepository) UpdateProgress(ctx context.Context, id uuid.UUID, progress int) error {
-	query := `
-		UPDATE videos
-		SET transcoding_progress = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-
-	result, err := r.pool.Exec(ctx, query, progress, id)
-	if err != nil {
-		return fmt.Errorf("failed to update progress: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
-}
-
-func (r *PostgresVideoRepository) MarkAsReady(ctx context.Context, id uuid.UUID, qualities []string, thumbnailPath string) error {
-	query := `
-		UPDATE videos
-		SET status = $1,
-		    available_qualities = $2,
-		    thumbnail_path = $3,
-		    processed_at = NOW(),
-		    updated_at = NOW()
-		WHERE id = $4
-	`
-
-	result, err := r.pool.Exec(ctx, query, domain.VideoStatusReady, qualities, thumbnailPath, id)
-	if err != nil {
-		return fmt.Errorf("failed to mark as ready: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
+	return count, nil
 }
 
 func (r *PostgresVideoRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM videos WHERE id = $1`
-
-	result, err := r.pool.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete video: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
+	return r.exec(ctx, `DELETE FROM videos WHERE id = $1`, id)
 }
 
-func (r *PostgresVideoRepository) GetByStatus(ctx context.Context, status domain.VideoStatus, limit, offset int) ([]*domain.Video, error) {
-	query := `
-		SELECT id, title, description, filename, file_path, file_size, mime_type,
-			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, created_at, updated_at, processed_at
-		FROM videos
-		WHERE status = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := r.pool.Query(ctx, query, status, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get videos by status: %w", err)
-	}
-	defer rows.Close()
-
-	var videos []*domain.Video
-	for rows.Next() {
-		var video domain.Video
-		err := rows.Scan(
-			&video.ID,
-			&video.Title,
-			&video.Description,
-			&video.Filename,
-			&video.FilePath,
-			&video.FileSize,
-			&video.MimeType,
-			&video.Duration,
-			&video.OriginalResolution,
-			&video.ThumbnailPath,
-			&video.Status,
-			&video.TranscodingProgress,
-			&video.AvailableQualities,
-			&video.CreatedAt,
-			&video.UpdatedAt,
-			&video.ProcessedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan video: %w", err)
-		}
-		videos = append(videos, &video)
-	}
-
-	return videos, nil
+func (r *PostgresVideoRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.VideoStatus) error {
+	return r.exec(ctx, `UPDATE videos SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
 }
 
-func (r *PostgresVideoRepository) Search(ctx context.Context, query string, limit, offset int) ([]*domain.Video, error) {
-	sqlQuery := `
-		SELECT id, title, description, filename, file_path, file_size, mime_type,
-			   duration, original_resolution, thumbnail_path, status,
-			   transcoding_progress, available_qualities, created_at, updated_at, processed_at
-		FROM videos
-		WHERE title ILIKE '%' || $1 || '%' OR COALESCE(description, '') ILIKE '%' || $1 || '%'
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := r.pool.Query(ctx, sqlQuery, query, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search videos: %w", err)
-	}
-	defer rows.Close()
-
-	var videos []*domain.Video
-	for rows.Next() {
-		var video domain.Video
-		err := rows.Scan(
-			&video.ID,
-			&video.Title,
-			&video.Description,
-			&video.Filename,
-			&video.FilePath,
-			&video.FileSize,
-			&video.MimeType,
-			&video.Duration,
-			&video.OriginalResolution,
-			&video.ThumbnailPath,
-			&video.Status,
-			&video.TranscodingProgress,
-			&video.AvailableQualities,
-			&video.CreatedAt,
-			&video.UpdatedAt,
-			&video.ProcessedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan video: %w", err)
-		}
-		videos = append(videos, &video)
-	}
-
-	return videos, nil
+func (r *PostgresVideoRepository) UpdateProgress(ctx context.Context, id uuid.UUID, progress int) error {
+	return r.exec(ctx, `UPDATE videos SET transcoding_progress = $2, updated_at = NOW() WHERE id = $1`, id, progress)
 }
 
 func (r *PostgresVideoRepository) UpdateDuration(ctx context.Context, id uuid.UUID, duration int) error {
-	query := `
-		UPDATE videos
-		SET duration = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-
-	result, err := r.pool.Exec(ctx, query, duration, id)
-	if err != nil {
-		return fmt.Errorf("failed to update duration: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
+	return r.exec(ctx, `UPDATE videos SET duration = $2, updated_at = NOW() WHERE id = $1`, id, duration)
 }
 
 func (r *PostgresVideoRepository) UpdateResolution(ctx context.Context, id uuid.UUID, resolution string) error {
-	query := `
-		UPDATE videos
-		SET original_resolution = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-
-	result, err := r.pool.Exec(ctx, query, resolution, id)
-	if err != nil {
-		return fmt.Errorf("failed to update resolution: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
-}
-
-func (r *PostgresVideoRepository) MarkAsFailed(ctx context.Context, id uuid.UUID) error {
-	query := `
-		UPDATE videos
-		SET status = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-
-	result, err := r.pool.Exec(ctx, query, domain.VideoStatusFailed, id)
-	if err != nil {
-		return fmt.Errorf("failed to mark as failed: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.ErrVideoNotFound
-	}
-
-	return nil
+	return r.exec(ctx, `UPDATE videos SET original_resolution = $2, updated_at = NOW() WHERE id = $1`, id, resolution)
 }
 
 func (r *PostgresVideoRepository) UpdateHLSInfo(ctx context.Context, id uuid.UUID, hlsMasterPath string, hlsReady bool) error {
-	query := `
-		UPDATE videos
-		SET hls_master_path = $1, hls_ready = $2, streaming_protocol = $3, updated_at = NOW()
-		WHERE id = $4
-	`
+	return r.exec(ctx,
+		`UPDATE videos
+		 SET hls_master_path = $2, hls_ready = $3, streaming_protocol = 'hls', updated_at = NOW()
+		 WHERE id = $1`,
+		id, hlsMasterPath, hlsReady,
+	)
+}
 
-	result, err := r.pool.Exec(ctx, query, hlsMasterPath, hlsReady, "hls", id)
+func (r *PostgresVideoRepository) MarkAsReady(ctx context.Context, id uuid.UUID, qualities []string, thumbnailPath string) error {
+	return r.exec(ctx,
+		`UPDATE videos
+		 SET status = $2, available_qualities = $3, thumbnail_path = $4,
+		     transcoding_progress = 100, processed_at = NOW(), updated_at = NOW()
+		 WHERE id = $1`,
+		id, domain.VideoStatusReady, qualities, thumbnailPath,
+	)
+}
+
+func (r *PostgresVideoRepository) MarkAsFailed(ctx context.Context, id uuid.UUID) error {
+	return r.exec(ctx, `UPDATE videos SET status = $2, updated_at = NOW() WHERE id = $1`, id, domain.VideoStatusFailed)
+}
+
+// exec runs a statement whose first argument is the video ID and reports
+// ErrVideoNotFound when it matches no row. Every update method shared this
+// eight-line body verbatim.
+func (r *PostgresVideoRepository) exec(ctx context.Context, query string, id uuid.UUID, args ...any) error {
+	tag, err := r.pool.Exec(ctx, query, append([]any{id}, args...)...)
 	if err != nil {
-		return fmt.Errorf("failed to update HLS info: %w", err)
+		return fmt.Errorf("updating video %s: %w", id, err)
 	}
-
-	if result.RowsAffected() == 0 {
+	if tag.RowsAffected() == 0 {
 		return domain.ErrVideoNotFound
 	}
-
 	return nil
 }

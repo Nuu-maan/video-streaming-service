@@ -15,9 +15,9 @@ type Claims struct {
 }
 
 type TokenService struct {
-	secretKey      []byte
-	tokenDuration  time.Duration
-	issuer         string
+	secretKey     []byte
+	tokenDuration time.Duration
+	issuer        string
 }
 
 func NewTokenService(secretKey string, tokenDuration time.Duration, issuer string) *TokenService {

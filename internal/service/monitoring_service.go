@@ -4,15 +4,18 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/orchids/video-streaming/internal/domain"
 	"github.com/redis/go-redis/v9"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
+
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 )
 
 type MonitoringService struct {
@@ -138,29 +141,71 @@ func (s *MonitoringService) GetDatabaseMetrics(ctx context.Context) (*domain.Dat
 }
 
 func (s *MonitoringService) GetRedisMetrics(ctx context.Context) (*domain.RedisMetrics, error) {
-	info, err := s.redis.Info(ctx, "stats", "memory", "clients").Result()
+	// INFO is called without section arguments. Passing multiple sections
+	// ("INFO stats memory clients") is only supported from Redis 7.0 onward and
+	// is a plain syntax error on anything older, so the previous call failed
+	// outright against Redis 5 and 6. The argument-less form returns the default
+	// sections — which include stats, memory, and clients — on every version.
+	raw, err := s.redis.Info(ctx).Result()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Redis info: %w", err)
+		return nil, fmt.Errorf("querying Redis INFO: %w", err)
 	}
+	info := parseRedisInfo(raw)
 
 	dbSize, err := s.redis.DBSize(ctx).Result()
 	if err != nil {
-		dbSize = 0
+		return nil, fmt.Errorf("querying Redis DBSIZE: %w", err)
 	}
 
-	memoryUsed, _ := s.redis.Do(ctx, "INFO", "memory").Result()
-	memoryPeak := int64(0)
+	hits := info.int64("keyspace_hits")
+	misses := info.int64("keyspace_misses")
+
+	var hitRate float64
+	if lookups := hits + misses; lookups > 0 {
+		hitRate = float64(hits) / float64(lookups)
+	}
 
 	return &domain.RedisMetrics{
-		MemoryUsed:       0,
-		MemoryPeak:       memoryPeak,
+		MemoryUsed:       info.int64("used_memory"),
+		MemoryPeak:       info.int64("used_memory_peak"),
 		TotalKeys:        dbSize,
-		Hits:             0,
-		Misses:           0,
-		HitRate:          0.0,
-		ConnectedClients: 0,
+		Hits:             hits,
+		Misses:           misses,
+		HitRate:          hitRate,
+		ConnectedClients: int(info.int64("connected_clients")),
 		Timestamp:        time.Now(),
 	}, nil
+}
+
+// redisInfo is the parsed form of the Redis INFO reply.
+type redisInfo map[string]string
+
+// int64 returns the named field as an int64, or 0 when the field is absent or
+// unparseable. INFO fields are advisory metrics; a missing one is not an error.
+func (i redisInfo) int64(field string) int64 {
+	value, err := strconv.ParseInt(i[field], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+// parseRedisInfo parses the INFO reply, which is CRLF-delimited "key:value"
+// lines interleaved with "# Section" headers and blank lines.
+func parseRedisInfo(raw string) redisInfo {
+	info := make(redisInfo)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		info[key] = value
+	}
+	return info
 }
 
 func (s *MonitoringService) CheckHealth(ctx context.Context) error {

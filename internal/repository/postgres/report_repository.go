@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
+	"errors"
+	"fmt"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/orchids/video-streaming/internal/domain"
 )
 
 type ReportRepository struct {
@@ -46,10 +48,12 @@ func (r *ReportRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.C
 		&report.ReviewedBy, &report.ReviewedAt, &report.Action, &report.CreatedAt, &report.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		// pgx reports a missing row as pgx.ErrNoRows, never sql.ErrNoRows, so the
+		// previous comparison could never fire and ErrReportNotFound was unreachable.
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrReportNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("getting report %s: %w", id, err)
 	}
 
 	return report, nil
@@ -104,6 +108,19 @@ func (r *ReportRepository) Update(ctx context.Context, report *domain.ContentRep
 func (r *ReportRepository) CountByStatus(ctx context.Context, status domain.ReportStatus) (int64, error) {
 	query := `SELECT COUNT(*) FROM content_reports WHERE status = $1`
 	var count int64
-	err := r.db.QueryRow(ctx, query, status).Scan(&count)
-	return count, err
+	if err := r.db.QueryRow(ctx, query, status).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting reports by status: %w", err)
+	}
+	return count, nil
+}
+
+// CountByReporterAndVideo reports how many times reporterID has already reported
+// videoID. Moderation uses it to reject duplicate reports from the same user.
+func (r *ReportRepository) CountByReporterAndVideo(ctx context.Context, reporterID, videoID uuid.UUID) (int64, error) {
+	query := `SELECT COUNT(*) FROM content_reports WHERE reporter_id = $1 AND video_id = $2`
+	var count int64
+	if err := r.db.QueryRow(ctx, query, reporterID, videoID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting reports by reporter: %w", err)
+	}
+	return count, nil
 }

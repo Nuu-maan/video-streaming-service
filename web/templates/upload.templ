@@ -1,8 +1,7 @@
 package templates
 
 import (
-	"github.com/orchids/video-streaming/internal/domain"
-	"fmt"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 )
 
 templ UploadPage() {
@@ -104,11 +103,11 @@ templ UploadSuccess(video *domain.Video) {
 				<div class="mt-2 text-sm text-green-300">
 					<p><strong>Title:</strong> { video.Title }</p>
 					<p><strong>ID:</strong> { video.ID.String() }</p>
-					if video.Duration != nil {
-						<p><strong>Duration:</strong> { fmt.Sprintf("%.1f seconds", *video.Duration) }</p>
+					if video.Duration > 0 {
+						<p><strong>Duration:</strong> { formatDuration(video.Duration) }</p>
 					}
-					if video.OriginalResolution != nil {
-						<p><strong>Resolution:</strong> { *video.OriginalResolution }</p>
+					if video.OriginalResolution != "" {
+						<p><strong>Resolution:</strong> { video.OriginalResolution }</p>
 					}
 				</div>
 				<div class="mt-4">

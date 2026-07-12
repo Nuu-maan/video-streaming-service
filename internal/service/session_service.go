@@ -33,7 +33,7 @@ func NewSessionService(redisClient *redis.Client) *SessionService {
 
 func (s *SessionService) CreateSession(ctx context.Context, userID, username, role, ipAddress, userAgent string, rememberMe bool) (string, error) {
 	sessionID := uuid.New().String()
-	
+
 	duration := 7 * 24 * time.Hour
 	if rememberMe {
 		duration = 30 * 24 * time.Hour

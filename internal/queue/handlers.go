@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/service"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 	"github.com/hibiken/asynq"
-	"github.com/orchids/video-streaming/internal/service"
-	"github.com/orchids/video-streaming/pkg/logger"
 )
 
 type VideoProcessingHandler struct {
@@ -24,9 +24,7 @@ func NewVideoProcessingHandler(transcodingService *service.TranscodingService, l
 func (h *VideoProcessingHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	payload, err := ParseVideoProcessingPayload(task)
 	if err != nil {
-		h.logger.Error(ctx, "failed to parse video processing payload", map[string]interface{}{
-			"error": err.Error(),
-		})
+		h.logger.Error(ctx, "failed to parse video processing payload", err, map[string]interface{}{})
 		return fmt.Errorf("parse payload: %w", err)
 	}
 
@@ -38,9 +36,8 @@ func (h *VideoProcessingHandler) ProcessTask(ctx context.Context, task *asynq.Ta
 	})
 
 	if err := h.transcodingService.ProcessVideo(ctx, payload.VideoID); err != nil {
-		h.logger.Error(ctx, "video processing failed", map[string]interface{}{
+		h.logger.Error(ctx, "video processing failed", err, map[string]interface{}{
 			"video_id": payload.VideoID,
-			"error":    err.Error(),
 			"task_id":  task.ResultWriter().TaskID(),
 		})
 		return fmt.Errorf("process video: %w", err)
@@ -67,9 +64,7 @@ func NewThumbnailGenerationHandler(logger *logger.Logger) *ThumbnailGenerationHa
 func (h *ThumbnailGenerationHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	payload, err := ParseThumbnailGenerationPayload(task)
 	if err != nil {
-		h.logger.Error(ctx, "failed to parse thumbnail generation payload", map[string]interface{}{
-			"error": err.Error(),
-		})
+		h.logger.Error(ctx, "failed to parse thumbnail generation payload", err, map[string]interface{}{})
 		return fmt.Errorf("parse payload: %w", err)
 	}
 
