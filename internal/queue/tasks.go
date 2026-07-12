@@ -24,7 +24,7 @@ type ThumbnailGenerationPayload struct {
 }
 
 type CleanupPayload struct {
-	VideoID string `json:"video_id"`
+	VideoID string   `json:"video_id"`
 	Paths   []string `json:"paths"`
 }
 

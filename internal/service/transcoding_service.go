@@ -7,25 +7,24 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/config"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/repository"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 	"github.com/google/uuid"
-	"github.com/orchids/video-streaming/internal/config"
-	"github.com/orchids/video-streaming/internal/domain"
-	"github.com/orchids/video-streaming/internal/repository"
-	"github.com/orchids/video-streaming/pkg/logger"
 )
 
 type QualitySpec struct {
-	Name      string
-	Width     int
-	Height    int
-	Bitrate   string
-	MaxRate   string
-	BufSize   string
-	FPS       int
+	Name    string
+	Width   int
+	Height  int
+	Bitrate string
+	MaxRate string
+	BufSize string
+	FPS     int
 }
 
 var qualitySpecs = map[string]QualitySpec{
@@ -119,9 +118,8 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	metadata, err := s.ffmpegService.ExtractMetadata(ctx, video.FilePath)
 	if err != nil {
-		s.log.Error(ctx, "failed to extract metadata", map[string]interface{}{
+		s.log.Error(ctx, "failed to extract metadata", err, map[string]interface{}{
 			"video_id": videoID,
-			"error":    err.Error(),
 		})
 		s.videoRepo.MarkAsFailed(ctx, id)
 		return fmt.Errorf("failed to extract metadata: %w", err)
@@ -129,18 +127,16 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	duration := int(metadata.Duration)
 	resolution := fmt.Sprintf("%dx%d", metadata.Width, metadata.Height)
-	
+
 	if err := s.videoRepo.UpdateDuration(ctx, id, duration); err != nil {
-		s.log.Error(ctx, "failed to update duration", map[string]interface{}{
+		s.log.Error(ctx, "failed to update duration", err, map[string]interface{}{
 			"video_id": videoID,
-			"error":    err.Error(),
 		})
 	}
-	
+
 	if err := s.videoRepo.UpdateResolution(ctx, id, resolution); err != nil {
-		s.log.Error(ctx, "failed to update resolution", map[string]interface{}{
+		s.log.Error(ctx, "failed to update resolution", err, map[string]interface{}{
 			"video_id": videoID,
-			"error":    err.Error(),
 		})
 	}
 
@@ -156,32 +152,30 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	for i, quality := range qualities {
 		spec := qualitySpecs[quality]
-		
+
 		if metadata.Height < spec.Height {
 			s.log.Info(ctx, "skipping quality (would upscale)", map[string]interface{}{
-				"video_id":          videoID,
-				"quality":           quality,
-				"original_height":   metadata.Height,
-				"target_height":     spec.Height,
+				"video_id":        videoID,
+				"quality":         quality,
+				"original_height": metadata.Height,
+				"target_height":   spec.Height,
 			})
 			continue
 		}
 
 		progress := int(float64(i) / float64(totalSteps) * 100)
 		if err := s.videoRepo.UpdateProgress(ctx, id, progress); err != nil {
-			s.log.Error(ctx, "failed to update progress", map[string]interface{}{
+			s.log.Error(ctx, "failed to update progress", err, map[string]interface{}{
 				"video_id": videoID,
 				"progress": progress,
-				"error":    err.Error(),
 			})
 		}
 
 		outputPath := filepath.Join(outputDir, quality+".mp4")
 		if err := s.transcodeVideo(ctx, video.FilePath, outputPath, spec); err != nil {
-			s.log.Error(ctx, "failed to transcode quality", map[string]interface{}{
+			s.log.Error(ctx, "failed to transcode quality", err, map[string]interface{}{
 				"video_id": videoID,
 				"quality":  quality,
-				"error":    err.Error(),
 			})
 			continue
 		}
@@ -200,7 +194,7 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	hlsProgress := int(float64(len(qualities)) / float64(totalSteps) * 100)
 	if err := s.videoRepo.UpdateProgress(ctx, id, hlsProgress); err != nil {
-		s.log.Error(ctx, "failed to update progress", map[string]interface{}{
+		s.log.Error(ctx, "failed to update progress", err, map[string]interface{}{
 			"video_id": videoID,
 			"progress": hlsProgress,
 		})
@@ -210,10 +204,9 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 	for _, quality := range transcoded {
 		mp4Path := filepath.Join(outputDir, quality+".mp4")
 		if err := s.ConvertToHLS(ctx, videoID, quality, mp4Path); err != nil {
-			s.log.Error(ctx, "failed to convert to HLS", map[string]interface{}{
+			s.log.Error(ctx, "failed to convert to HLS", err, map[string]interface{}{
 				"video_id": videoID,
 				"quality":  quality,
-				"error":    err.Error(),
 			})
 			continue
 		}
@@ -222,16 +215,14 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	if len(hlsQualities) > 0 {
 		if err := s.GenerateMasterPlaylist(ctx, videoID, hlsQualities); err != nil {
-			s.log.Error(ctx, "failed to generate master playlist", map[string]interface{}{
+			s.log.Error(ctx, "failed to generate master playlist", err, map[string]interface{}{
 				"video_id": videoID,
-				"error":    err.Error(),
 			})
 		} else {
 			hlsMasterPath := fmt.Sprintf("/uploads/processed/%s/hls/master.m3u8", videoID)
 			if err := s.videoRepo.UpdateHLSInfo(ctx, id, hlsMasterPath, true); err != nil {
-				s.log.Error(ctx, "failed to update HLS info", map[string]interface{}{
+				s.log.Error(ctx, "failed to update HLS info", err, map[string]interface{}{
 					"video_id": videoID,
-					"error":    err.Error(),
 				})
 			}
 		}
@@ -239,7 +230,7 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	thumbnailProgress := int(float64(len(qualities)+1) / float64(totalSteps) * 100)
 	if err := s.videoRepo.UpdateProgress(ctx, id, thumbnailProgress); err != nil {
-		s.log.Error(ctx, "failed to update progress", map[string]interface{}{
+		s.log.Error(ctx, "failed to update progress", err, map[string]interface{}{
 			"video_id": videoID,
 			"progress": thumbnailProgress,
 		})
@@ -247,9 +238,8 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 
 	thumbnailPath, err := s.generateThumbnail(ctx, video.FilePath, videoID, metadata.Duration)
 	if err != nil {
-		s.log.Error(ctx, "failed to generate thumbnail", map[string]interface{}{
+		s.log.Error(ctx, "failed to generate thumbnail", err, map[string]interface{}{
 			"video_id": videoID,
-			"error":    err.Error(),
 		})
 		thumbnailPath = ""
 	}
@@ -259,9 +249,8 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 	}
 
 	if err := s.videoRepo.UpdateProgress(ctx, id, 100); err != nil {
-		s.log.Error(ctx, "failed to update final progress", map[string]interface{}{
+		s.log.Error(ctx, "failed to update final progress", err, map[string]interface{}{
 			"video_id": videoID,
-			"error":    err.Error(),
 		})
 	}
 
@@ -277,7 +266,7 @@ func (s *TranscodingService) transcodeVideo(ctx context.Context, inputPath, outp
 	s.ensureFFmpegPath()
 
 	scaleFilter := fmt.Sprintf("scale=%d:%d", spec.Width, spec.Height)
-	
+
 	args := []string{
 		"-i", inputPath,
 		"-vf", scaleFilter,
@@ -296,7 +285,7 @@ func (s *TranscodingService) transcodeVideo(ctx context.Context, inputPath, outp
 	}
 
 	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg failed: %w, output: %s", err, string(output))
@@ -314,7 +303,7 @@ func (s *TranscodingService) generateThumbnail(ctx context.Context, inputPath, v
 	}
 
 	thumbnailPath := filepath.Join(thumbnailDir, videoID+".jpg")
-	
+
 	seekTime := duration * 0.1
 	if seekTime > 10 {
 		seekTime = 10
@@ -330,7 +319,7 @@ func (s *TranscodingService) generateThumbnail(ctx context.Context, inputPath, v
 	}
 
 	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg thumbnail generation failed: %w, output: %s", err, string(output))
@@ -381,14 +370,13 @@ func (s *TranscodingService) ConvertToHLS(ctx context.Context, videoID, quality,
 		if ctx.Err() == context.DeadlineExceeded || ctx.Err() == context.Canceled {
 			return fmt.Errorf("HLS conversion cancelled or timed out")
 		}
-		
-		s.log.Error(ctx, "HLS conversion failed, retrying once", map[string]interface{}{
+
+		s.log.Error(ctx, "HLS conversion failed, retrying once", err, map[string]interface{}{
 			"video_id": videoID,
 			"quality":  quality,
-			"error":    err.Error(),
 			"output":   string(output),
 		})
-		
+
 		time.Sleep(2 * time.Second)
 		cmd = exec.CommandContext(ctx, s.ffmpegPath, args...)
 		output, err = cmd.CombinedOutput()
@@ -410,10 +398,10 @@ func (s *TranscodingService) ConvertToHLS(ctx context.Context, videoID, quality,
 	}
 
 	s.log.Info(ctx, "HLS conversion successful", map[string]interface{}{
-		"video_id":       videoID,
-		"quality":        quality,
-		"segment_count":  len(segmentFiles),
-		"playlist_path":  playlistPath,
+		"video_id":      videoID,
+		"quality":       quality,
+		"segment_count": len(segmentFiles),
+		"playlist_path": playlistPath,
 	})
 
 	return nil
@@ -464,8 +452,8 @@ func (s *TranscodingService) GenerateMasterPlaylist(ctx context.Context, videoID
 	}
 
 	s.log.Info(ctx, "master playlist generated", map[string]interface{}{
-		"video_id":   videoID,
-		"qualities":  qualities,
+		"video_id":    videoID,
+		"qualities":   qualities,
 		"master_path": masterPath,
 	})
 

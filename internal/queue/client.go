@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 	"github.com/hibiken/asynq"
-	"github.com/orchids/video-streaming/pkg/logger"
 )
 
 type QueueClient struct {
@@ -36,8 +36,7 @@ func (q *QueueClient) EnqueueVideoProcessing(ctx context.Context, videoID string
 
 	task, err := NewVideoProcessingTask(payload)
 	if err != nil {
-		q.logger.Error(ctx, "failed to create video processing task", map[string]interface{}{
-			"error":    err.Error(),
+		q.logger.Error(ctx, "failed to create video processing task", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		return fmt.Errorf("failed to create task: %w", err)
@@ -51,8 +50,7 @@ func (q *QueueClient) EnqueueVideoProcessing(ctx context.Context, videoID string
 
 	info, err := q.client.EnqueueContext(ctx, task, opts...)
 	if err != nil {
-		q.logger.Error(ctx, "failed to enqueue video processing task", map[string]interface{}{
-			"error":    err.Error(),
+		q.logger.Error(ctx, "failed to enqueue video processing task", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		return fmt.Errorf("failed to enqueue task: %w", err)
@@ -86,8 +84,7 @@ func (q *QueueClient) EnqueueThumbnailGeneration(ctx context.Context, videoID st
 
 	info, err := q.client.EnqueueContext(ctx, task, opts...)
 	if err != nil {
-		q.logger.Error(ctx, "failed to enqueue thumbnail generation task", map[string]interface{}{
-			"error":    err.Error(),
+		q.logger.Error(ctx, "failed to enqueue thumbnail generation task", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		return fmt.Errorf("failed to enqueue task: %w", err)
