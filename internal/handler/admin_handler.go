@@ -4,14 +4,14 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/queue"
+	"github.com/Nuu-maan/video-streaming-service/internal/repository"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
+	"github.com/Nuu-maan/video-streaming-service/pkg/response"
+	"github.com/Nuu-maan/video-streaming-service/pkg/validator"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
-	"github.com/orchids/video-streaming/internal/domain"
-	"github.com/orchids/video-streaming/internal/queue"
-	"github.com/orchids/video-streaming/internal/repository"
-	"github.com/orchids/video-streaming/pkg/logger"
-	"github.com/orchids/video-streaming/pkg/response"
-	"github.com/orchids/video-streaming/pkg/validator"
 )
 
 type AdminHandler struct {
@@ -52,8 +52,7 @@ func (h *AdminHandler) RetryVideo(c *gin.Context) {
 			response.NotFound(c, "Video not found")
 			return
 		}
-		h.log.Error(ctx, "failed to get video", map[string]interface{}{
-			"error":    err.Error(),
+		h.log.Error(ctx, "failed to get video", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		response.InternalError(c, "Failed to retrieve video")
@@ -66,8 +65,7 @@ func (h *AdminHandler) RetryVideo(c *gin.Context) {
 	}
 
 	if err := h.videoRepo.UpdateStatus(ctx, videoID, domain.VideoStatusUploading); err != nil {
-		h.log.Error(ctx, "failed to update video status", map[string]interface{}{
-			"error":    err.Error(),
+		h.log.Error(ctx, "failed to update video status", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		response.InternalError(c, "Failed to update video status")
@@ -75,8 +73,7 @@ func (h *AdminHandler) RetryVideo(c *gin.Context) {
 	}
 
 	if err := h.queueClient.EnqueueVideoProcessing(ctx, videoID.String(), 1); err != nil {
-		h.log.Error(ctx, "failed to enqueue video processing", map[string]interface{}{
-			"error":    err.Error(),
+		h.log.Error(ctx, "failed to enqueue video processing", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		response.InternalError(c, "Failed to enqueue video for processing")
@@ -94,9 +91,7 @@ func (h *AdminHandler) GetQueueStats(c *gin.Context) {
 
 	stats, err := h.inspector.GetQueueInfo("default")
 	if err != nil {
-		h.log.Error(ctx, "failed to get queue stats", map[string]interface{}{
-			"error": err.Error(),
-		})
+		h.log.Error(ctx, "failed to get queue stats", err, map[string]interface{}{})
 		response.InternalError(c, "Failed to retrieve queue statistics")
 		return
 	}
@@ -119,11 +114,9 @@ func (h *AdminHandler) GetQueueStats(c *gin.Context) {
 func (h *AdminHandler) ListActiveWorkers(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	workers, err := h.inspector.ListServers()
+	workers, err := h.inspector.Servers()
 	if err != nil {
-		h.log.Error(ctx, "failed to list workers", map[string]interface{}{
-			"error": err.Error(),
-		})
+		h.log.Error(ctx, "failed to list workers", err, map[string]interface{}{})
 		response.InternalError(c, "Failed to retrieve worker information")
 		return
 	}

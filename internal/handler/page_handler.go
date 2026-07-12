@@ -3,14 +3,20 @@ package handler
 import (
 	"errors"
 
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
+	"github.com/Nuu-maan/video-streaming-service/internal/repository"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
+	"github.com/Nuu-maan/video-streaming-service/pkg/validator"
+	"github.com/Nuu-maan/video-streaming-service/web/templates"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/orchids/video-streaming/internal/domain"
-	"github.com/orchids/video-streaming/internal/repository"
-	"github.com/orchids/video-streaming/pkg/logger"
-	"github.com/orchids/video-streaming/pkg/validator"
-	"github.com/orchids/video-streaming/web/templates"
 )
+
+// publicVisibility is the filter value for anonymous browsing. The rendered
+// pages are unauthenticated, so they must never list private videos.
+var publicVisibility = domain.VisibilityPublic
+
+// pageListLimit caps how many videos the browse page renders at once.
+const pageListLimit = 50
 
 type PageHandler struct {
 	videoRepo repository.VideoRepository
@@ -35,11 +41,9 @@ func (h *PageHandler) UploadPage(c *gin.Context) {
 func (h *PageHandler) VideoListPage(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	videos, err := h.videoRepo.List(ctx, 50, 0)
+	videos, err := h.videoRepo.List(ctx, repository.VideoFilter{Visibility: &publicVisibility}, repository.Page{Limit: pageListLimit})
 	if err != nil {
-		h.log.Error(ctx, "failed to list videos for page", map[string]interface{}{
-			"error": err.Error(),
-		})
+		h.log.Error(ctx, "failed to list videos for page", err, map[string]interface{}{})
 		c.String(500, "Failed to load videos")
 		return
 	}
@@ -64,8 +68,7 @@ func (h *PageHandler) VideoPlayerPage(c *gin.Context) {
 			c.String(404, "Video not found")
 			return
 		}
-		h.log.Error(ctx, "failed to get video for page", map[string]interface{}{
-			"error":    err.Error(),
+		h.log.Error(ctx, "failed to get video for page", err, map[string]interface{}{
 			"video_id": videoID,
 		})
 		c.String(500, "Failed to load video")
