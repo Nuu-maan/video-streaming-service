@@ -1,4 +1,4 @@
-\"-- Migration: Add HLS support to videos table\"  
+-- Migration: Add HLS support to videos table
   
 ALTER TABLE videos  
 ADD COLUMN IF NOT EXISTS hls_master_path TEXT,  
