@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	BcryptCost         = 12
-	MinPasswordLength  = 8
-	MaxPasswordLength  = 72
+	BcryptCost        = 12
+	MinPasswordLength = 8
+	MaxPasswordLength = 72
 )
 
 var commonPasswords = map[string]bool{
