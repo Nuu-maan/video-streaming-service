@@ -5,226 +5,181 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Nuu-maan/video-streaming-service/pkg/appctx"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 )
 
+// RuleGuest is the fallback rule applied when a caller asks for a rule that was
+// never registered.
+const RuleGuest = "guest_api"
+
+// RateLimitRule is a fixed-window allowance: Requests per Window, plus a burst
+// allowance on top of it.
 type RateLimitRule struct {
 	Requests  int
 	Window    time.Duration
 	BurstSize int
 }
 
-var DefaultRateLimits = map[string]RateLimitRule{
-	"guest_api": {
-		Requests:  30,
-		Window:    time.Minute,
-		BurstSize: 10,
-	},
-	"user_api": {
-		Requests:  60,
-		Window:    time.Minute,
-		BurstSize: 20,
-	},
-	"premium_api": {
-		Requests:  300,
-		Window:    time.Minute,
-		BurstSize: 50,
-	},
-	"upload": {
-		Requests:  5,
-		Window:    time.Hour,
-		BurstSize: 2,
-	},
-	"search": {
-		Requests:  30,
-		Window:    time.Minute,
-		BurstSize: 10,
-	},
-	"streaming": {
-		Requests:  300,
-		Window:    time.Minute,
-		BurstSize: 100,
-	},
-	"auth": {
-		Requests:  10,
-		Window:    time.Minute,
-		BurstSize: 5,
-	},
+// Limit is the effective ceiling for the rule, burst included.
+func (r RateLimitRule) Limit() int64 {
+	return int64(r.Requests + r.BurstSize)
 }
 
+// defaultRateLimits is the built-in rule set. It is unexported and copied into
+// each RateLimiter: it used to be an exported map assigned directly into the
+// limiter, so any SetRule call mutated the defaults for every limiter in the
+// process.
+var defaultRateLimits = map[string]RateLimitRule{
+	RuleGuest:     {Requests: 30, Window: time.Minute, BurstSize: 10},
+	"user_api":    {Requests: 60, Window: time.Minute, BurstSize: 20},
+	"premium_api": {Requests: 300, Window: time.Minute, BurstSize: 50},
+	"upload":      {Requests: 5, Window: time.Hour, BurstSize: 2},
+	"search":      {Requests: 30, Window: time.Minute, BurstSize: 10},
+	"streaming":   {Requests: 300, Window: time.Minute, BurstSize: 100},
+	"auth":        {Requests: 10, Window: time.Minute, BurstSize: 5},
+}
+
+// RateLimiter enforces fixed-window request limits backed by Redis.
+//
+// The rule set is guarded by a mutex. The previous implementation registered new
+// rules lazily from inside request handlers, writing to a plain map from many
+// goroutines at once — a concurrent map write, which panics the process rather
+// than merely racing.
 type RateLimiter struct {
 	redis *redis.Client
+
+	mu    sync.RWMutex
 	rules map[string]RateLimitRule
 }
 
 func NewRateLimiter(redisClient *redis.Client) *RateLimiter {
-	return &RateLimiter{
-		redis: redisClient,
-		rules: DefaultRateLimits,
+	rules := make(map[string]RateLimitRule, len(defaultRateLimits))
+	for name, rule := range defaultRateLimits {
+		rules[name] = rule
 	}
+	return &RateLimiter{redis: redisClient, rules: rules}
 }
 
+// SetRule registers or replaces a rule.
 func (rl *RateLimiter) SetRule(name string, rule RateLimitRule) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	rl.rules[name] = rule
 }
 
-func (rl *RateLimiter) Allow(ctx context.Context, key string, ruleName string) (bool, int64, time.Duration, error) {
-	rule, exists := rl.rules[ruleName]
-	if !exists {
-		rule = rl.rules["guest_api"]
+// Rule returns the named rule, falling back to RuleGuest when it is unknown.
+func (rl *RateLimiter) Rule(name string) RateLimitRule {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+
+	if rule, ok := rl.rules[name]; ok {
+		return rule
 	}
+	return rl.rules[RuleGuest]
+}
+
+// Decision is the outcome of a limit check.
+type Decision struct {
+	Allowed   bool
+	Limit     int64
+	Remaining int64
+	ResetIn   time.Duration
+}
+
+// Allow records one request against key and reports whether it is permitted.
+//
+// A Redis failure is returned to the caller rather than swallowed. The previous
+// implementation returned (allowed=true, err=nil) on every Redis error, which
+// silently disabled rate limiting and made the error checks at all four call
+// sites unreachable.
+func (rl *RateLimiter) Allow(ctx context.Context, key, ruleName string) (Decision, error) {
+	rule := rl.Rule(ruleName)
 
 	now := time.Now()
 	windowStart := now.Truncate(rule.Window)
 	windowKey := fmt.Sprintf("ratelimit:%s:%s:%d", ruleName, key, windowStart.Unix())
 
 	pipe := rl.redis.Pipeline()
-	incrCmd := pipe.Incr(ctx, windowKey)
+	incr := pipe.Incr(ctx, windowKey)
+	// Expiry is set on every request rather than only on creation. Setting it
+	// only when the counter is new would leave the key immortal whenever the
+	// EXPIRE leg of the pipeline failed.
 	pipe.Expire(ctx, windowKey, rule.Window)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return true, 0, 0, nil
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return Decision{}, fmt.Errorf("rate limit check: %w", err)
 	}
 
-	count := incrCmd.Val()
-	limit := int64(rule.Requests)
+	count := incr.Val()
+	limit := rule.Limit()
+
 	remaining := limit - count
 	if remaining < 0 {
 		remaining = 0
 	}
 
-	resetTime := windowStart.Add(rule.Window).Sub(now)
-
-	if count > limit+int64(rule.BurstSize) {
-		return false, remaining, resetTime, nil
-	}
-
-	return true, remaining, resetTime, nil
+	return Decision{
+		Allowed:   count <= limit,
+		Limit:     limit,
+		Remaining: remaining,
+		ResetIn:   windowStart.Add(rule.Window).Sub(now),
+	}, nil
 }
 
-func (rl *RateLimiter) GetRetryAfter(ctx context.Context, key string, ruleName string) time.Duration {
-	rule, exists := rl.rules[ruleName]
-	if !exists {
-		rule = rl.rules["guest_api"]
-	}
-
-	now := time.Now()
-	windowStart := now.Truncate(rule.Window)
-	return windowStart.Add(rule.Window).Sub(now)
-}
-
-func (rl *RateLimiter) RecordFailure(ctx context.Context, key string) error {
-	failKey := fmt.Sprintf("ratelimit:fails:%s", key)
-
-	pipe := rl.redis.Pipeline()
-	pipe.Incr(ctx, failKey)
-	pipe.Expire(ctx, failKey, time.Hour)
-	_, err := pipe.Exec(ctx)
-	return err
-}
-
-func (rl *RateLimiter) GetFailureCount(ctx context.Context, key string) (int64, error) {
-	failKey := fmt.Sprintf("ratelimit:fails:%s", key)
-	count, err := rl.redis.Get(ctx, failKey).Int64()
-	if err == redis.Nil {
-		return 0, nil
-	}
-	return count, err
-}
-
-func (rl *RateLimiter) ClearFailures(ctx context.Context, key string) error {
-	failKey := fmt.Sprintf("ratelimit:fails:%s", key)
-	return rl.redis.Del(ctx, failKey).Err()
-}
-
+// RateLimitMiddleware enforces ruleName, keyed by authenticated user when there
+// is one and by client IP otherwise.
+//
+// On a Redis outage the request is allowed through and the failure is logged.
+// That is a deliberate choice — availability over enforcement — but it is now an
+// explicit, visible one rather than an accident.
 func RateLimitMiddleware(limiter *RateLimiter, ruleName string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		key := c.ClientIP()
-
-		if userID, exists := c.Get("user_id"); exists {
-			key = fmt.Sprintf("%v", userID)
-		}
-
-		allowed, remaining, resetTime, err := limiter.Allow(c.Request.Context(), key, ruleName)
-		if err != nil {
-			c.Next()
-			return
-		}
-
-		c.Header("X-RateLimit-Limit", strconv.Itoa(limiter.rules[ruleName].Requests))
-		c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-		c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(resetTime).Unix(), 10))
-
-		if !allowed {
-			c.Header("Retry-After", strconv.FormatInt(int64(resetTime.Seconds()), 10))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Rate limit exceeded",
-				"retry_after": int64(resetTime.Seconds()),
-			})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
+	return rateLimitWith(limiter, ruleName, nil)
 }
 
-func AdaptiveRateLimitMiddleware(limiter *RateLimiter) gin.HandlerFunc {
+// RateLimitWithLogger is RateLimitMiddleware that reports Redis failures.
+func RateLimitWithLogger(limiter *RateLimiter, ruleName string, log *logger.Logger) gin.HandlerFunc {
+	return rateLimitWith(limiter, ruleName, log)
+}
+
+func rateLimitWith(limiter *RateLimiter, ruleName string, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := c.ClientIP()
+		ctx := c.Request.Context()
+		key := rateLimitKey(c)
 
-		fails, _ := limiter.GetFailureCount(c.Request.Context(), key)
-
-		var ruleName string
-		switch {
-		case fails > 50:
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Too many failed requests. Please try again later.",
-				"retry_after": 3600,
-			})
-			c.Abort()
-			return
-		case fails > 20:
-			ruleName = "strict"
-			if _, exists := limiter.rules["strict"]; !exists {
-				limiter.rules["strict"] = RateLimitRule{
-					Requests:  5,
-					Window:    time.Minute,
-					BurstSize: 1,
-				}
+		decision, err := limiter.Allow(ctx, key, ruleName)
+		if err != nil {
+			if log != nil {
+				log.Error(ctx, "rate limiter unavailable; allowing request", err, map[string]interface{}{
+					"rule": ruleName,
+				})
 			}
-		case fails > 10:
-			ruleName = "moderate"
-			if _, exists := limiter.rules["moderate"]; !exists {
-				limiter.rules["moderate"] = RateLimitRule{
-					Requests:  15,
-					Window:    time.Minute,
-					BurstSize: 3,
-				}
-			}
-		default:
-			ruleName = "guest_api"
-		}
-
-		allowed, remaining, resetTime, err := limiter.Allow(c.Request.Context(), key, ruleName)
-		if err != nil {
 			c.Next()
 			return
 		}
 
-		c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
+		header := c.Writer.Header()
+		header.Set("X-RateLimit-Limit", strconv.FormatInt(decision.Limit, 10))
+		header.Set("X-RateLimit-Remaining", strconv.FormatInt(decision.Remaining, 10))
+		header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(decision.ResetIn).Unix(), 10))
 
-		if !allowed {
-			limiter.RecordFailure(c.Request.Context(), key)
-			c.Header("Retry-After", strconv.FormatInt(int64(resetTime.Seconds()), 10))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Rate limit exceeded",
-				"retry_after": int64(resetTime.Seconds()),
+		if !decision.Allowed {
+			retryAfter := int64(decision.ResetIn.Seconds()) + 1
+			header.Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "RATE_LIMITED",
+					"message": "Rate limit exceeded",
+				},
+				"retry_after": retryAfter,
 			})
-			c.Abort()
 			return
 		}
 
@@ -232,60 +187,56 @@ func AdaptiveRateLimitMiddleware(limiter *RateLimiter) gin.HandlerFunc {
 	}
 }
 
-func IPBasedRateLimitMiddleware(limiter *RateLimiter, ruleName string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		key := c.ClientIP()
-
-		if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-			key = xff
-		}
-
-		allowed, remaining, resetTime, err := limiter.Allow(c.Request.Context(), key, ruleName)
-		if err != nil {
-			c.Next()
-			return
-		}
-
-		c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
-
-		if !allowed {
-			c.Header("Retry-After", strconv.FormatInt(int64(resetTime.Seconds()), 10))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Rate limit exceeded",
-				"retry_after": int64(resetTime.Seconds()),
-			})
-			c.Abort()
-			return
-		}
-
-		c.Next()
+// rateLimitKey identifies the caller to limit.
+//
+// An authenticated user is limited by user ID, so rotating IPs does not reset
+// their budget. Everyone else is limited by client IP as gin resolves it, which
+// honours the configured trusted-proxy list. The old implementation keyed off a
+// raw X-Forwarded-For header, which any client can set to an arbitrary value —
+// making the limit trivially bypassable by varying the header per request.
+func rateLimitKey(c *gin.Context) string {
+	if principal, ok := appctx.PrincipalFrom(c.Request.Context()); ok {
+		return "user:" + principal.UserID.String()
 	}
+	return "ip:" + c.ClientIP()
 }
 
+// ConcurrencyLimitMiddleware caps how many requests one caller may have in
+// flight at once.
 func ConcurrencyLimitMiddleware(limiter *RateLimiter, maxConcurrent int) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := c.ClientIP()
-		concurrencyKey := fmt.Sprintf("concurrent:%s", key)
-
 		ctx := c.Request.Context()
-		current, err := limiter.redis.Incr(ctx, concurrencyKey).Result()
+		key := "concurrent:" + rateLimitKey(c)
+
+		current, err := limiter.redis.Incr(ctx, key).Result()
 		if err != nil {
 			c.Next()
 			return
 		}
+		// Bound the counter's lifetime so a crashed request cannot hold a slot
+		// forever.
+		limiter.redis.Expire(ctx, key, time.Minute)
 
-		limiter.redis.Expire(ctx, concurrencyKey, time.Minute)
+		// The release must not run on the request context: by the time the
+		// handler returns, that context is cancelled, so the DECR would fail
+		// and the caller's in-flight count would ratchet up permanently until
+		// the key expired.
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			limiter.redis.Decr(releaseCtx, key)
+		}()
 
 		if current > int64(maxConcurrent) {
-			limiter.redis.Decr(ctx, concurrencyKey)
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many concurrent requests",
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "TOO_MANY_CONCURRENT",
+					"message": "Too many concurrent requests",
+				},
 			})
-			c.Abort()
 			return
 		}
-
-		defer limiter.redis.Decr(ctx, concurrencyKey)
 
 		c.Next()
 	}
