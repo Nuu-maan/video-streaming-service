@@ -5,13 +5,30 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// pgForeignKeyViolation is the SQLSTATE for a foreign-key violation, matched
+// by code (never by message text) like the unique-violation handling in
+// user_repository.go.
+const pgForeignKeyViolation = "23503"
+
+// isVideoFKViolation reports whether err is the video_id foreign key failing,
+// i.e. the referenced video does not exist. The constraint name is schema
+// metadata, not localized driver prose, so matching on it is stable.
+func isVideoFKViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == pgForeignKeyViolation &&
+		strings.Contains(pgErr.ConstraintName, "video_id")
+}
 
 type AnalyticsRepository struct {
 	db *pgxpool.Pool
@@ -426,13 +443,121 @@ func (r *AnalyticsRepository) GetRealtimeMetrics(ctx context.Context) (*domain.R
 }
 
 func (r *AnalyticsRepository) RecordView(ctx context.Context, videoID, userID *uuid.UUID, sessionID, ipAddress, userAgent, quality, deviceType, country, source string) error {
-	query := `
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning view transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// NULLIF keeps absent optionals out of the analytics aggregates, which
+	// filter on IS NOT NULL; inserting '' would surface as a phantom country
+	// or quality bucket in the per-video breakdowns.
+	insert := `
 	INSERT INTO video_views (video_id, user_id, session_id, ip_address, user_agent, quality, device_type, country, source)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
+	`
+	if _, err := tx.Exec(ctx, insert, videoID, userID, sessionID, ipAddress, userAgent, quality, deviceType, country, source); err != nil {
+		if isVideoFKViolation(err) {
+			return domain.ErrVideoNotFound
+		}
+		return fmt.Errorf("recording view for video %s: %w", videoID, err)
+	}
+
+	// No trigger maintains videos.view_count from video_views — the 000009
+	// count triggers cover likes, comments, subscriptions, and playlists only —
+	// so the denormalised counter is bumped here, inside the same transaction
+	// as the raw view row, to keep the two from drifting.
+	if _, err := tx.Exec(ctx, `UPDATE videos SET view_count = view_count + 1 WHERE id = $1`, videoID); err != nil {
+		return fmt.Errorf("incrementing view count for video %s: %w", videoID, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing view for video %s: %w", videoID, err)
+	}
+	return nil
+}
+
+// UpsertWatchHistory records playback progress, replacing the user's previous
+// entry for the video (UNIQUE(user_id, video_id)). last_position always tracks
+// the latest report so resume-playback works after seeking backwards, while
+// watch_duration only grows and completed only latches on, so rewatching the
+// intro cannot shrink how much of the video the user is credited with.
+func (r *AnalyticsRepository) UpsertWatchHistory(ctx context.Context, entry *domain.WatchHistory) error {
+	query := `
+	INSERT INTO watch_history (user_id, video_id, watch_duration, completed, last_position, watched_at)
+	VALUES ($1, $2, $3, $4, $5, NOW())
+	ON CONFLICT (user_id, video_id) DO UPDATE SET
+		watch_duration = GREATEST(watch_history.watch_duration, EXCLUDED.watch_duration),
+		completed = watch_history.completed OR EXCLUDED.completed,
+		last_position = EXCLUDED.last_position,
+		watched_at = NOW()
 	`
 
-	_, err := r.db.Exec(ctx, query, videoID, userID, sessionID, ipAddress, userAgent, quality, deviceType, country, source)
-	return err
+	if _, err := r.db.Exec(ctx, query, entry.UserID, entry.VideoID, entry.WatchDuration, entry.Completed, entry.LastPosition); err != nil {
+		if isVideoFKViolation(err) {
+			return domain.ErrVideoNotFound
+		}
+		return fmt.Errorf("upserting watch history for user %s video %s: %w", entry.UserID, entry.VideoID, err)
+	}
+	return nil
+}
+
+// ListWatchHistory returns userID's watch history, most recently watched
+// first, along with the total row count for pagination.
+func (r *AnalyticsRepository) ListWatchHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.WatchHistory, int, error) {
+	query := `
+	SELECT id, user_id, video_id, watched_at, watch_duration, completed, last_position
+	FROM watch_history
+	WHERE user_id = $1
+	ORDER BY watched_at DESC
+	LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.Query(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing watch history for user %s: %w", userID, err)
+	}
+	defer rows.Close()
+
+	var entries []*domain.WatchHistory
+	for rows.Next() {
+		entry := &domain.WatchHistory{}
+		if err := rows.Scan(
+			&entry.ID, &entry.UserID, &entry.VideoID, &entry.WatchedAt,
+			&entry.WatchDuration, &entry.Completed, &entry.LastPosition,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scanning watch history row: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterating watch history: %w", err)
+	}
+
+	var total int
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM watch_history WHERE user_id = $1`, userID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting watch history for user %s: %w", userID, err)
+	}
+
+	return entries, total, nil
+}
+
+func (r *AnalyticsRepository) ClearWatchHistory(ctx context.Context, userID uuid.UUID) error {
+	if _, err := r.db.Exec(ctx, `DELETE FROM watch_history WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("clearing watch history for user %s: %w", userID, err)
+	}
+	return nil
+}
+
+func (r *AnalyticsRepository) DeleteWatchHistoryEntry(ctx context.Context, userID, videoID uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM watch_history WHERE user_id = $1 AND video_id = $2`, userID, videoID)
+	if err != nil {
+		return fmt.Errorf("deleting watch history entry for user %s video %s: %w", userID, videoID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrWatchHistoryNotFound
+	}
+	return nil
 }
 
 func (r *AnalyticsRepository) UpdateViewDuration(ctx context.Context, viewID uuid.UUID, duration int, percent float64) error {
