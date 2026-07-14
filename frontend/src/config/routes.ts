@@ -7,6 +7,7 @@ export const routes = {
   videos: "/videos",
   video: (id: string) => `/videos/${id}`,
   search: "/search",
+  trending: "/trending",
   category: (name: string) => `/search?category=${encodeURIComponent(name)}`,
 
   login: "/login",

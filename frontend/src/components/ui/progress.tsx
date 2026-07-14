@@ -21,7 +21,9 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="size-full flex-1 bg-primary transition-all"
+        /* The indicator only ever moves via translateX — `transition-all` made the
+           browser watch every property for a change that never comes. */
+        className="size-full flex-1 bg-primary transition-transform duration-(--motion-medium) ease-out-quart"
         style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
       />
     </ProgressPrimitive.Root>
