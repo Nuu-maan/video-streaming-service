@@ -126,22 +126,6 @@ func (u *User) HasPermission(permission Permission) bool {
 	return u.Role.HasPermission(permission)
 }
 
-func (u *User) GenerateEmailVerificationToken() uuid.UUID {
-	token := uuid.New()
-	u.EmailVerificationToken = &token
-	u.UpdatedAt = time.Now()
-	return token
-}
-
-func (u *User) GeneratePasswordResetToken(expiryDuration time.Duration) uuid.UUID {
-	token := uuid.New()
-	expiry := time.Now().Add(expiryDuration)
-	u.PasswordResetToken = &token
-	u.PasswordResetExpiry = &expiry
-	u.UpdatedAt = time.Now()
-	return token
-}
-
 func (u *User) VerifyEmail() {
 	u.EmailVerified = true
 	u.EmailVerificationToken = nil

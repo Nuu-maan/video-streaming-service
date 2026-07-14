@@ -23,8 +23,10 @@ import (
 	"github.com/Nuu-maan/video-streaming-service/internal/queue"
 	"github.com/Nuu-maan/video-streaming-service/internal/repository/postgres"
 	"github.com/Nuu-maan/video-streaming-service/internal/service"
+	"github.com/Nuu-maan/video-streaming-service/internal/storage"
 	"github.com/Nuu-maan/video-streaming-service/pkg/jwt"
 	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
+	"github.com/Nuu-maan/video-streaming-service/pkg/mailer"
 )
 
 // App owns every long-lived dependency of the API process.
@@ -46,8 +48,12 @@ type App struct {
 	rateLimiter   *middleware.RateLimiter
 
 	authHandler       *handler.AuthHandler
+	accountHandler    *handler.AccountHandler
 	videoHandler      *handler.VideoHandler
 	streamingHandler  *handler.StreamingHandler
+	viewHandler       *handler.ViewHandler
+	socialHandler     *handler.SocialHandler
+	searchHandler     *handler.SearchHandler
 	adminHandler      *handler.AdminHandler
 	pageHandler       *handler.PageHandler
 	analyticsHandler  *handler.AnalyticsHandler
@@ -62,8 +68,18 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	app := &App{cfg: cfg, log: log, startedAt: time.Now()}
 
+	// The store comes first: with MinIO enabled its construction reaches the
+	// network to verify buckets, and a misconfigured object store should fail
+	// the boot before anything else is dialled.
+	store, err := storage.New(cfg)
+	if err != nil {
+		app.Close()
+		return nil, fmt.Errorf("initialising storage: %w", err)
+	}
+
 	db, err := openDatabase(ctx, cfg.Database)
 	if err != nil {
+		app.Close()
 		return nil, err
 	}
 	app.db = db
@@ -94,24 +110,50 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	analyticsRepo := postgres.NewAnalyticsRepository(db)
 	reportRepo := postgres.NewReportRepository(db)
 	auditRepo := postgres.NewAuditLogRepository(db)
+	socialRepo := postgres.NewSocialRepository(db)
+	searchRepo := postgres.NewSearchRepository(db)
 
-	tokens := jwt.NewTokenService(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.JWTIssuer)
-	app.authenticator = middleware.NewAuthenticator(tokens)
+	tokens := jwt.NewTokenService(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL, cfg.Auth.JWTIssuer)
+	// AccessTokenTTL bounds every denylist entry's lifetime: once the longest
+	// possible token has expired, nothing the entry could deny is still valid.
+	sessions := service.NewSessionService(redisClient, cfg.Auth.AccessTokenTTL)
+	app.authenticator = middleware.NewAuthenticator(tokens, sessions, cfg.Auth.RevocationFailOpen, log)
 	app.rateLimiter = middleware.NewRateLimiter(redisClient)
 
+	mail := mailer.New(mailer.Config{
+		Host:          cfg.Mail.SMTPHost,
+		Port:          cfg.Mail.SMTPPort,
+		Username:      cfg.Mail.SMTPUsername,
+		Password:      cfg.Mail.SMTPPassword,
+		From:          cfg.Mail.From,
+		AllowInsecure: cfg.Mail.SMTPAllowInsecure,
+	}, log)
+
 	ffmpeg := service.NewFFmpegService(log)
-	authService := service.NewAuthService(userRepo, tokens, cfg.Auth, log)
-	uploadService := service.NewUploadService(videoRepo, ffmpeg, &cfg.Storage, log)
+	authService := service.NewAuthService(userRepo, tokens, sessions, cfg.Auth, log)
+	// AuthService doubles as the SessionRevoker: a password reset or change
+	// must kill every outstanding session, exactly as logout-all does.
+	emailService := service.NewEmailService(userRepo, mail, cfg.Mail.FrontendBaseURL, cfg.Mail.PasswordResetTTL, authService, log)
+	uploadService := service.NewUploadService(videoRepo, ffmpeg, &cfg.Storage, store, log)
 	auditService := service.NewAuditService(auditRepo)
 	analyticsService := service.NewAnalyticsService(analyticsRepo, redisClient)
-	moderationService := service.NewModerationService(reportRepo, videoRepo, userRepo, auditService)
+	// uploadService doubles as the VideoFileRemover: a moderator's delete_video
+	// must take the files with it, exactly as an owner's delete does.
+	moderationService := service.NewModerationService(reportRepo, videoRepo, userRepo, uploadService, auditService)
 	// Reuses the single inspector above rather than dialing Redis again.
 	monitoringService := service.NewMonitoringService(db, redisClient, app.inspector)
+	socialService := service.NewSocialService(socialRepo, videoRepo, userRepo, log)
+	searchService := service.NewSearchService(searchRepo)
+	viewTracker := service.NewViewTracker(analyticsRepo, redisClient, log)
 
 	app.authHandler = handler.NewAuthHandler(authService, userRepo, log)
+	app.accountHandler = handler.NewAccountHandler(emailService, log)
 	app.videoHandler = handler.NewVideoHandler(uploadService, videoRepo, app.queueClient, log, cfg)
-	app.streamingHandler = handler.NewStreamingHandler(videoRepo, app.cache, cfg, log)
-	app.adminHandler = handler.NewAdminHandler(videoRepo, app.queueClient, cfg.Redis.Address(), log)
+	app.streamingHandler = handler.NewStreamingHandler(videoRepo, app.cache, store, log)
+	app.viewHandler = handler.NewViewHandler(viewTracker, log)
+	app.socialHandler = handler.NewSocialHandler(socialService, log)
+	app.searchHandler = handler.NewSearchHandler(searchService, log)
+	app.adminHandler = handler.NewAdminHandler(videoRepo, app.queueClient, app.inspector, log)
 	app.pageHandler = handler.NewPageHandler(videoRepo, log)
 	app.analyticsHandler = handler.NewAnalyticsHandler(analyticsService, log)
 	app.moderationHandler = handler.NewModerationHandler(moderationService, log)

@@ -50,4 +50,29 @@ var (
 	ErrMissingReportTarget = errors.New("report must have at least one target")
 	ErrMissingReportReason = errors.New("report reason is required")
 	ErrReportNotFound      = errors.New("report not found")
+
+	// Social.
+	ErrLikeNotFound           = errors.New("like not found")
+	ErrCommentNotFound        = errors.New("comment not found")
+	ErrSubscriptionNotFound   = errors.New("subscription not found")
+	ErrSelfSubscription       = errors.New("cannot subscribe to yourself")
+	ErrPlaylistNotFound       = errors.New("playlist not found")
+	ErrPlaylistVideoNotFound  = errors.New("video is not in the playlist")
+	ErrVideoAlreadyInPlaylist = errors.New("video is already in the playlist")
+	ErrWatchLaterNotFound     = errors.New("video is not in watch later")
+	ErrNotificationNotFound   = errors.New("notification not found")
+
+	// Account email verification.
+	ErrEmailAlreadyVerified = errors.New("email is already verified")
+
+	// Token revocation.
+	ErrTokenRevoked          = errors.New("token has been revoked")
+	ErrRevocationUnavailable = errors.New("revocation state unavailable")
+
+	// Watch history.
+	ErrWatchHistoryNotFound = errors.New("watch history entry not found")
+
+	// Storage.
+	ErrStorageKeyInvalid     = errors.New("invalid storage key")
+	ErrStorageObjectNotFound = errors.New("storage object not found")
 )

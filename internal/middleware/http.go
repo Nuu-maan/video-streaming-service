@@ -73,7 +73,21 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 	}
 }
 
-// CORS applies the configured cross-origin policy.
+// corsExposedHeaders are the response headers scripts on another origin may
+// read. Without Content-Range, Accept-Ranges, and Content-Length a cross-origin
+// video player cannot see the result of its own Range requests, so seeking in
+// hls.js and the MP4 fallback silently breaks from any other origin.
+const corsExposedHeaders = "Content-Length, Content-Range, Accept-Ranges, X-Request-ID"
+
+// corsRequiredRequestHeaders are always allowed in preflight, whatever the
+// configured allowlist says: without Authorization, Content-Type, and Range the
+// API cannot be used cross-origin at all, and this API exists to be consumed
+// from other origins.
+var corsRequiredRequestHeaders = []string{"Authorization", "Content-Type", "Range"}
+
+// CORS applies the configured cross-origin policy. Preflight requests are
+// answered here, before routing, so every route — including ones that only
+// register GET — responds to OPTIONS.
 //
 // The origin is echoed back only when it appears in the allowlist. The previous
 // implementation sent `Access-Control-Allow-Origin: *` together with
@@ -81,7 +95,7 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 // outright, and which would be a CSRF hole if they honoured it.
 func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 	allowedMethods := strings.Join(cfg.AllowedMethods, ", ")
-	allowedHeaders := strings.Join(cfg.AllowedHeaders, ", ")
+	allowedHeaders := strings.Join(mergeHeaderNames(cfg.AllowedHeaders, corsRequiredRequestHeaders), ", ")
 	maxAge := strconv.Itoa(int(cfg.MaxAge.Seconds()))
 
 	return func(c *gin.Context) {
@@ -106,6 +120,7 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 			header.Set("Access-Control-Allow-Methods", allowedMethods)
 			header.Set("Access-Control-Allow-Headers", allowedHeaders)
+			header.Set("Access-Control-Expose-Headers", corsExposedHeaders)
 			header.Set("Access-Control-Max-Age", maxAge)
 		}
 
@@ -116,6 +131,26 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// mergeHeaderNames appends the required header names missing from configured,
+// comparing case-insensitively as HTTP header names demand.
+func mergeHeaderNames(configured, required []string) []string {
+	merged := make([]string, 0, len(configured)+len(required))
+	merged = append(merged, configured...)
+	for _, name := range required {
+		found := false
+		for _, existing := range configured {
+			if strings.EqualFold(existing, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, name)
+		}
+	}
+	return merged
 }
 
 // Recovery converts a panic into a 500 with the request ID preserved, logging
