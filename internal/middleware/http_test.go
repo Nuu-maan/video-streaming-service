@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,8 +232,21 @@ func TestCORS(t *testing.T) {
 				if got := header.Get("Access-Control-Allow-Methods"); got == "" {
 					t.Error("Access-Control-Allow-Methods is missing on an allowed origin")
 				}
-				if got := header.Get("Access-Control-Allow-Headers"); got == "" {
-					t.Error("Access-Control-Allow-Headers is missing on an allowed origin")
+				// Range is not in testCORSConfig's allowlist; it must be
+				// granted anyway or cross-origin seeking breaks.
+				allowHeaders := header.Get("Access-Control-Allow-Headers")
+				for _, name := range []string{"Authorization", "Content-Type", "Range"} {
+					if !strings.Contains(allowHeaders, name) {
+						t.Errorf("Access-Control-Allow-Headers = %q, want it to include %q", allowHeaders, name)
+					}
+				}
+				// Without these a cross-origin script cannot read the response
+				// headers Range requests depend on.
+				exposeHeaders := header.Get("Access-Control-Expose-Headers")
+				for _, name := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "X-Request-ID"} {
+					if !strings.Contains(exposeHeaders, name) {
+						t.Errorf("Access-Control-Expose-Headers = %q, want it to include %q", exposeHeaders, name)
+					}
 				}
 				if got := header.Get("Access-Control-Max-Age"); got != "43200" {
 					t.Errorf("Access-Control-Max-Age = %q, want %q", got, "43200")

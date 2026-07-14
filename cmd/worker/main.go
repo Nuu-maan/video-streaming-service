@@ -16,6 +16,7 @@ import (
 	"github.com/Nuu-maan/video-streaming-service/internal/queue"
 	"github.com/Nuu-maan/video-streaming-service/internal/repository/postgres"
 	"github.com/Nuu-maan/video-streaming-service/internal/service"
+	"github.com/Nuu-maan/video-streaming-service/internal/storage"
 	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 )
 
@@ -31,6 +32,14 @@ func main() {
 		"environment": cfg.Server.Environment,
 		"concurrency": cfg.Worker.MaxConcurrentJobs,
 	})
+
+	// The store comes first: with MinIO enabled its construction reaches the
+	// network to verify buckets, and a worker that cannot reach the object
+	// store has no business picking up transcoding tasks.
+	store, err := storage.New(cfg)
+	if err != nil {
+		log.Fatal(context.Background(), "Failed to initialize storage", err, nil)
+	}
 
 	dbPool, err := initDatabase(cfg)
 	if err != nil {
@@ -50,7 +59,7 @@ func main() {
 	ffmpegService := service.NewFFmpegService(log)
 	transcodingService := service.NewTranscodingService(videoRepo, ffmpegService, &cfg.Storage, log)
 
-	videoProcessingHandler := queue.NewVideoProcessingHandler(transcodingService, log)
+	videoProcessingHandler := queue.NewVideoProcessingHandler(transcodingService, videoRepo, store, &cfg.Storage, log)
 
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: cfg.Redis.Address()},

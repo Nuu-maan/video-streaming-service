@@ -172,6 +172,32 @@ func (wl *WatchLater) Validate() error {
 	return nil
 }
 
+// SubscriptionEntry is one row of a subscriber or subscription listing: the
+// counterpart user plus the relationship metadata. For a subscriber listing the
+// user is the subscriber; for a subscription listing it is the creator.
+type SubscriptionEntry struct {
+	UserID          uuid.UUID `json:"user_id"`
+	Username        string    `json:"username"`
+	AvatarURL       string    `json:"avatar_url,omitempty"`
+	SubscriberCount int64     `json:"subscriber_count"`
+	NotifyUploads   bool      `json:"notify_uploads"`
+	SubscribedAt    time.Time `json:"subscribed_at"`
+}
+
+// PlaylistItem is a video inside a playlist together with its ordering
+// metadata. Positions may have gaps: removals never renumber.
+type PlaylistItem struct {
+	Position int32     `json:"position"`
+	AddedAt  time.Time `json:"added_at"`
+	Video    *Video    `json:"video"`
+}
+
+// WatchLaterItem is a saved video together with when it was saved.
+type WatchLaterItem struct {
+	AddedAt time.Time `json:"added_at"`
+	Video   *Video    `json:"video"`
+}
+
 type NotificationType string
 
 const (

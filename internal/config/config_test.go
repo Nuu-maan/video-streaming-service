@@ -41,6 +41,9 @@ func validConfig() *Config {
 		CORS: CORSConfig{
 			AllowedOrigins: []string{"http://localhost:8080"},
 		},
+		Mail: MailConfig{
+			PasswordResetTTL: time.Hour,
+		},
 	}
 }
 
@@ -244,6 +247,31 @@ func TestConfigValidateDevelopment(t *testing.T) {
 				c.MinIO.SecretAccessKey = "minioadmin"
 			},
 		},
+		{
+			name:    "non-positive password reset TTL rejected",
+			mutate:  func(c *Config) { c.Mail.PasswordResetTTL = 0 },
+			wantErr: "MAIL_PASSWORD_RESET_TTL",
+		},
+		{
+			name: "trusted proxies accept IPs and CIDR ranges",
+			mutate: func(c *Config) {
+				c.Server.TrustedProxies = []string{"10.0.0.1", "172.16.0.0/12", "::1"}
+			},
+		},
+		{
+			name: "trusted proxy that is neither IP nor CIDR rejected",
+			mutate: func(c *Config) {
+				c.Server.TrustedProxies = []string{"nginx.internal"}
+			},
+			wantErr: "SERVER_TRUSTED_PROXIES",
+		},
+		{
+			name: "insecure SMTP is fine in development",
+			mutate: func(c *Config) {
+				c.Mail.SMTPHost = "localhost"
+				c.Mail.SMTPAllowInsecure = true
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -312,6 +340,30 @@ func TestConfigValidateProduction(t *testing.T) {
 		{
 			name:   "sslmode verify-full accepted",
 			mutate: func(c *Config) { c.Database.SSLMode = "verify-full" },
+		},
+		{
+			name: "SMTP without TLS rejected",
+			mutate: func(c *Config) {
+				c.Mail.SMTPHost = "smtp.example.com"
+				c.Mail.SMTPAllowInsecure = true
+			},
+			wantErr: "SMTP_ALLOW_INSECURE",
+		},
+		{
+			name: "SMTP with TLS accepted",
+			mutate: func(c *Config) {
+				c.Mail.SMTPHost = "smtp.example.com"
+				c.Mail.SMTPAllowInsecure = false
+			},
+		},
+		{
+			// The waiver only matters when a server is configured; with mail
+			// going to the log there is nothing to send in cleartext.
+			name: "insecure flag without an SMTP host accepted",
+			mutate: func(c *Config) {
+				c.Mail.SMTPHost = ""
+				c.Mail.SMTPAllowInsecure = true
+			},
 		},
 	}
 

@@ -1,18 +1,19 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"time"
 
 	"github.com/Nuu-maan/video-streaming-service/internal/cache"
-	"github.com/Nuu-maan/video-streaming-service/internal/config"
 	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/Nuu-maan/video-streaming-service/internal/repository"
+	"github.com/Nuu-maan/video-streaming-service/internal/storage"
 	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 	"github.com/Nuu-maan/video-streaming-service/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -27,54 +28,52 @@ const playlistCacheTTL = time.Hour
 type StreamingHandler struct {
 	videoRepo repository.VideoRepository
 	cache     *cache.CacheService
-	config    *config.Config
+	store     storage.Store
 	log       *logger.Logger
 }
 
 func NewStreamingHandler(
 	videoRepo repository.VideoRepository,
 	cacheService *cache.CacheService,
-	config *config.Config,
+	store storage.Store,
 	log *logger.Logger,
 ) *StreamingHandler {
 	return &StreamingHandler{
 		videoRepo: videoRepo,
 		cache:     cacheService,
-		config:    config,
+		store:     store,
 		log:       log,
 	}
 }
 
-// transcodedDir is where the worker writes a video's MP4 renditions and HLS
-// output. It must agree with TranscodingService, which builds its output path
-// from StorageConfig.TranscodedPath.
-//
-// These two disagreed: the worker wrote to TranscodedPath ("web/uploads/
-// transcoded/<id>") while the streaming handler read from a hardcoded
-// "./web/uploads/processed/<id>", a directory nothing ever created. Every
-// playlist and segment request therefore 404'd, so HLS playback could never
-// have worked. Both sides now derive the path from the same config value.
-func (h *StreamingHandler) transcodedDir(videoID uuid.UUID) string {
-	return filepath.Join(h.config.Storage.TranscodedPath, videoID.String())
+// transcodedKey addresses a file under a video's transcoded output in the
+// store. The worker writes under this same layout (the local store maps the
+// "transcoded" area onto StorageConfig.TranscodedPath), so writer and reader
+// agree by construction. They used to disagree — the worker wrote to
+// TranscodedPath while this handler read a hardcoded "processed" directory
+// nothing ever created, so every playlist and segment request 404'd.
+func transcodedKey(videoID uuid.UUID, parts ...string) string {
+	return storage.Key(append([]string{"transcoded", videoID.String()}, parts...)...)
 }
 
-// servePlaylist returns a cached playlist, falling back to reading it from disk
-// and populating the cache. Both playlist endpoints had their own copy of this.
+// servePlaylist returns a cached playlist, falling back to reading it from the
+// store and populating the cache. Both playlist endpoints had their own copy of
+// this.
 //
-// A cache failure is not fatal: the file on disk is the source of truth, so a
+// A cache failure is not fatal: the stored file is the source of truth, so a
 // Redis outage degrades latency rather than availability.
-func (h *StreamingHandler) servePlaylist(c *gin.Context, cacheKey, path string, fields map[string]interface{}) {
+func (h *StreamingHandler) servePlaylist(c *gin.Context, cacheKey, key string, fields map[string]interface{}) {
 	ctx := c.Request.Context()
 
 	cached, err := h.cache.Get(ctx, cacheKey)
 	if err != nil {
-		h.log.Warn(ctx, "playlist cache unavailable; reading from disk", fields)
+		h.log.Warn(ctx, "playlist cache unavailable; reading from storage", fields)
 	} else if len(cached) > 0 {
 		h.servePlaylistContent(c, string(cached))
 		return
 	}
 
-	content, err := os.ReadFile(path)
+	content, err := h.readObject(ctx, key)
 	if err != nil {
 		h.log.Error(ctx, "failed to read playlist", err, fields)
 		response.Error(c, http.StatusNotFound, "PLAYLIST_NOT_FOUND", "Playlist file not found")
@@ -89,6 +88,22 @@ func (h *StreamingHandler) servePlaylist(c *gin.Context, cacheKey, path string, 
 	}
 
 	h.servePlaylistContent(c, string(content))
+}
+
+// readObject slurps a whole object from the store. Only suitable for
+// playlists, which are a few hundred bytes; segments stream instead.
+func (h *StreamingHandler) readObject(ctx context.Context, key string) ([]byte, error) {
+	obj, err := h.store.Open(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Close()
+
+	content, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", key, err)
+	}
+	return content, nil
 }
 
 func (h *StreamingHandler) ServeMasterPlaylist(c *gin.Context) {
@@ -113,17 +128,22 @@ func (h *StreamingHandler) ServeMasterPlaylist(c *gin.Context) {
 		return
 	}
 
+	if !canViewVideo(ctx, video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
+
 	if !video.HLSReady || video.HLSMasterPath == nil {
 		response.Error(c, http.StatusNotFound, "HLS_NOT_READY", "HLS streaming not available for this video")
 		return
 	}
 
-	masterPath := filepath.Join(h.transcodedDir(videoID), "hls", "master.m3u8")
+	masterKey := transcodedKey(videoID, "hls", "master.m3u8")
 
 	h.servePlaylist(c,
 		fmt.Sprintf("playlist:%s:master", videoID),
-		masterPath,
-		map[string]interface{}{"video_id": videoID, "path": masterPath},
+		masterKey,
+		map[string]interface{}{"video_id": videoID, "key": masterKey},
 	)
 }
 
@@ -152,17 +172,22 @@ func (h *StreamingHandler) ServeQualityPlaylist(c *gin.Context) {
 		return
 	}
 
+	if !canViewVideo(ctx, video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
+
 	if !video.HLSReady {
 		response.Error(c, http.StatusNotFound, "HLS_NOT_READY", "HLS streaming not available")
 		return
 	}
 
-	playlistPath := filepath.Join(h.transcodedDir(videoID), "hls", quality, "playlist.m3u8")
+	playlistKey := transcodedKey(videoID, "hls", quality, "playlist.m3u8")
 
 	h.servePlaylist(c,
 		fmt.Sprintf("playlist:%s:%s", videoID, quality),
-		playlistPath,
-		map[string]interface{}{"video_id": videoID, "quality": quality, "path": playlistPath},
+		playlistKey,
+		map[string]interface{}{"video_id": videoID, "quality": quality, "key": playlistKey},
 	)
 }
 
@@ -197,31 +222,49 @@ func (h *StreamingHandler) ServeSegment(c *gin.Context) {
 		return
 	}
 
+	if !canViewVideo(ctx, video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
+
 	if !video.HLSReady {
 		response.Error(c, http.StatusNotFound, "HLS_NOT_READY", "HLS streaming not available")
 		return
 	}
 
-	segmentPath := filepath.Join(h.transcodedDir(videoID), "hls", quality, segment)
+	segmentKey := transcodedKey(videoID, "hls", quality, segment)
 
-	fileInfo, err := os.Stat(segmentPath)
+	fileInfo, err := h.store.Stat(ctx, segmentKey)
 	if err != nil {
 		h.log.Error(ctx, "segment not found", err, map[string]interface{}{
 			"video_id": videoID,
 			"quality":  quality,
 			"segment":  segment,
-			"path":     segmentPath,
+			"key":      segmentKey,
 		})
 		response.Error(c, http.StatusNotFound, "SEGMENT_NOT_FOUND", "Segment file not found")
 		return
 	}
 
+	obj, err := h.store.Open(ctx, segmentKey)
+	if err != nil {
+		h.log.Error(ctx, "failed to open segment", err, map[string]interface{}{
+			"video_id": videoID,
+			"quality":  quality,
+			"segment":  segment,
+			"key":      segmentKey,
+		})
+		response.Error(c, http.StatusNotFound, "SEGMENT_NOT_FOUND", "Segment file not found")
+		return
+	}
+	defer obj.Close()
+
 	c.Header("Content-Type", "video/MP2T")
 	c.Header("Cache-Control", "public, max-age=31536000, immutable")
 	c.Header("Accept-Ranges", "bytes")
-	c.Header("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	c.Header("Content-Length", fmt.Sprintf("%d", fileInfo.Size))
 
-	c.File(segmentPath)
+	http.ServeContent(c.Writer, c.Request, segment, fileInfo.ModTime, obj)
 }
 
 func (h *StreamingHandler) ServeMP4Fallback(c *gin.Context) {
@@ -249,6 +292,11 @@ func (h *StreamingHandler) ServeMP4Fallback(c *gin.Context) {
 		return
 	}
 
+	if !canViewVideo(ctx, video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
+
 	if video.Status != domain.VideoStatusReady {
 		response.Error(c, http.StatusNotFound, "VIDEO_NOT_READY", "Video not ready for streaming")
 		return
@@ -266,25 +314,100 @@ func (h *StreamingHandler) ServeMP4Fallback(c *gin.Context) {
 		return
 	}
 
-	mp4Path := filepath.Join(h.transcodedDir(videoID), quality+".mp4")
+	mp4Key := transcodedKey(videoID, quality+".mp4")
 
-	fileInfo, err := os.Stat(mp4Path)
+	fileInfo, err := h.store.Stat(ctx, mp4Key)
 	if err != nil {
 		h.log.Error(ctx, "MP4 file not found", err, map[string]interface{}{
 			"video_id": videoID,
 			"quality":  quality,
-			"path":     mp4Path,
+			"key":      mp4Key,
 		})
 		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "Video file not found")
 		return
 	}
 
+	obj, err := h.store.Open(ctx, mp4Key)
+	if err != nil {
+		h.log.Error(ctx, "failed to open MP4 file", err, map[string]interface{}{
+			"video_id": videoID,
+			"quality":  quality,
+			"key":      mp4Key,
+		})
+		response.Error(c, http.StatusNotFound, "FILE_NOT_FOUND", "Video file not found")
+		return
+	}
+	defer obj.Close()
+
 	c.Header("Content-Type", "video/mp4")
 	c.Header("Cache-Control", "public, max-age=3600")
 	c.Header("Accept-Ranges", "bytes")
-	c.Header("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	c.Header("Content-Length", fmt.Sprintf("%d", fileInfo.Size))
 
-	c.File(mp4Path)
+	// ServeContent needs only a ReadSeeker, so both backends can honour Range
+	// requests; a plain io.Copy here would break seeking in every player.
+	http.ServeContent(c.Writer, c.Request, quality+".mp4", fileInfo.ModTime, obj)
+}
+
+// ServeThumbnail serves a video's poster image.
+//
+// It exists because a thumbnail is not public data: it is a frame of the video,
+// so a private video's thumbnail must be as private as the video. Serving it
+// from a static file route would hand it to anyone who could guess the video ID,
+// and would not work at all against object storage.
+func (h *StreamingHandler) ServeThumbnail(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	videoID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.ValidationError(c, "Invalid video ID")
+		return
+	}
+
+	video, err := h.videoRepo.GetByID(ctx, videoID)
+	if err != nil {
+		if errors.Is(err, domain.ErrVideoNotFound) {
+			response.NotFound(c, "Video not found")
+			return
+		}
+		response.InternalError(c, "Failed to retrieve video")
+		return
+	}
+
+	if !canViewVideo(ctx, video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
+
+	if video.ThumbnailPath == nil || *video.ThumbnailPath == "" {
+		response.NotFound(c, "Thumbnail not available")
+		return
+	}
+
+	key := *video.ThumbnailPath
+
+	fileInfo, err := h.store.Stat(ctx, key)
+	if err != nil {
+		response.NotFound(c, "Thumbnail not available")
+		return
+	}
+
+	obj, err := h.store.Open(ctx, key)
+	if err != nil {
+		h.log.Error(ctx, "failed to open thumbnail", err, map[string]interface{}{
+			"video_id": videoID,
+			"key":      key,
+		})
+		response.NotFound(c, "Thumbnail not available")
+		return
+	}
+	defer obj.Close()
+
+	c.Header("Content-Type", "image/jpeg")
+	// A thumbnail never changes once written: the worker generates it exactly
+	// once, and a re-transcode produces a new video ID.
+	c.Header("Cache-Control", "public, max-age=86400, immutable")
+	http.ServeContent(c.Writer, c.Request, path.Base(key), fileInfo.ModTime, obj)
 }
 
 func (h *StreamingHandler) ClearPlaylistCache(c *gin.Context) {

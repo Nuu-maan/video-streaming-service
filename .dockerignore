@@ -1,0 +1,15 @@
+# Keep the build context small and keep secrets/artifacts out of image layers.
+.git
+.env
+bin/
+tmp/
+coverage.out
+coverage.html
+web/uploads/
+docs/assets/
+**/*_test.go
+Dockerfile
+docker-compose*.yml
+.dockerignore
+# Tool archives downloaded for local development (ffmpeg.zip, redis.zip).
+*.zip

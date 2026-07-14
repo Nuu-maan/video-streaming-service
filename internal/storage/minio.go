@@ -4,69 +4,64 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
-	"time"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	"github.com/Nuu-maan/video-streaming-service/internal/config"
+	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 )
 
-type MinIOConfig struct {
-	Endpoint        string
-	AccessKeyID     string
-	SecretAccessKey string
-	UseSSL          bool
-	BucketRaw       string
-	BucketProcessed string
-	BucketThumbs    string
+// MinIO is the object-store Store. A key's first segment selects the bucket —
+// "raw/x.mp4" lands in the raw bucket as object "x.mp4" — so the bucket layout
+// stays the three-bucket one the config describes, with the processed and
+// thumbnail buckets world-readable for players and <img> tags.
+type MinIO struct {
+	client  *minio.Client
+	buckets map[string]string
 }
 
-type MinIOStorage struct {
-	client          *minio.Client
-	bucketRaw       string
-	bucketProcessed string
-	bucketThumbs    string
-}
-
-func NewMinIOStorage(cfg MinIOConfig) (*MinIOStorage, error) {
+func NewMinIO(cfg config.MinIOConfig) (*MinIO, error) {
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Secure: cfg.UseSSL,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
+		return nil, fmt.Errorf("creating MinIO client: %w", err)
 	}
 
-	storage := &MinIOStorage{
-		client:          client,
-		bucketRaw:       cfg.BucketRaw,
-		bucketProcessed: cfg.BucketProcessed,
-		bucketThumbs:    cfg.BucketThumbs,
+	store := &MinIO{
+		client: client,
+		buckets: map[string]string{
+			"raw":        cfg.BucketRaw,
+			"transcoded": cfg.BucketProcessed,
+			"thumbnails": cfg.BucketThumbs,
+		},
 	}
 
-	if err := storage.ensureBuckets(context.Background()); err != nil {
+	if err := store.ensureBuckets(context.Background(), cfg); err != nil {
 		return nil, err
 	}
 
-	return storage, nil
+	return store, nil
 }
 
-func (s *MinIOStorage) ensureBuckets(ctx context.Context) error {
-	buckets := []string{s.bucketRaw, s.bucketProcessed, s.bucketThumbs}
-
-	for _, bucket := range buckets {
+func (s *MinIO) ensureBuckets(ctx context.Context, cfg config.MinIOConfig) error {
+	for _, bucket := range []string{cfg.BucketRaw, cfg.BucketProcessed, cfg.BucketThumbs} {
 		exists, err := s.client.BucketExists(ctx, bucket)
 		if err != nil {
-			return fmt.Errorf("failed to check bucket %s: %w", bucket, err)
+			return fmt.Errorf("checking bucket %s: %w", bucket, err)
 		}
-
 		if !exists {
 			if err := s.client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
-				return fmt.Errorf("failed to create bucket %s: %w", bucket, err)
+				return fmt.Errorf("creating bucket %s: %w", bucket, err)
 			}
 		}
 	}
 
+	// The raw bucket is deliberately not listed: originals are reachable only
+	// through the API, never by URL.
 	publicReadPolicy := `{
 		"Version": "2012-10-17",
 		"Statement": [
@@ -79,162 +74,139 @@ func (s *MinIOStorage) ensureBuckets(ctx context.Context) error {
 		]
 	}`
 
-	for _, bucket := range []string{s.bucketProcessed, s.bucketThumbs} {
+	for _, bucket := range []string{cfg.BucketProcessed, cfg.BucketThumbs} {
 		policy := fmt.Sprintf(publicReadPolicy, bucket)
 		if err := s.client.SetBucketPolicy(ctx, bucket, policy); err != nil {
-			return fmt.Errorf("failed to set policy for bucket %s: %w", bucket, err)
+			return fmt.Errorf("setting policy for bucket %s: %w", bucket, err)
 		}
 	}
 
 	return nil
 }
 
-func (s *MinIOStorage) UploadFile(ctx context.Context, bucket, key string, reader io.Reader, size int64, contentType string) error {
-	_, err := s.client.PutObject(ctx, bucket, key, reader, size, minio.PutObjectOptions{
-		ContentType: contentType,
-	})
+// locate maps a key onto its bucket and object name. A key whose area has no
+// bucket is a programming error and is refused rather than guessed at.
+func (s *MinIO) locate(key string) (bucket, object string, err error) {
+	if err := validateKey(key); err != nil {
+		return "", "", err
+	}
+	area, rest, _ := strings.Cut(key, "/")
+	bucket, ok := s.buckets[area]
+	if !ok || rest == "" {
+		return "", "", fmt.Errorf("%w: no bucket for %q", domain.ErrStorageKeyInvalid, key)
+	}
+	return bucket, rest, nil
+}
+
+func (s *MinIO) Save(ctx context.Context, key string, r io.Reader, size int64, contentType string) error {
+	bucket, object, err := s.locate(key)
 	if err != nil {
-		return fmt.Errorf("failed to upload file to %s/%s: %w", bucket, key, err)
+		return err
+	}
+
+	if _, err := s.client.PutObject(ctx, bucket, object, r, size, minio.PutObjectOptions{
+		ContentType: contentType,
+	}); err != nil {
+		return fmt.Errorf("uploading %s: %w", key, err)
 	}
 	return nil
 }
 
-func (s *MinIOStorage) UploadRawVideo(ctx context.Context, key string, reader io.Reader, size int64) error {
-	return s.UploadFile(ctx, s.bucketRaw, key, reader, size, "video/mp4")
-}
-
-func (s *MinIOStorage) UploadProcessedVideo(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
-	return s.UploadFile(ctx, s.bucketProcessed, key, reader, size, contentType)
-}
-
-func (s *MinIOStorage) UploadThumbnail(ctx context.Context, key string, reader io.Reader, size int64) error {
-	return s.UploadFile(ctx, s.bucketThumbs, key, reader, size, "image/jpeg")
-}
-
-func (s *MinIOStorage) DownloadFile(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	obj, err := s.client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+func (s *MinIO) Open(ctx context.Context, key string) (io.ReadSeekCloser, error) {
+	bucket, object, err := s.locate(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download file from %s/%s: %w", bucket, key, err)
+		return nil, err
 	}
+
+	obj, err := s.client.GetObject(ctx, bucket, object, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", key, err)
+	}
+
+	// GetObject defers the request until the first Read, so a missing object
+	// would otherwise surface only mid-response. Stat forces the round trip
+	// now, where the caller can still answer with a 404.
+	if _, err := obj.Stat(); err != nil {
+		obj.Close()
+		if isNoSuchKey(err) {
+			return nil, fmt.Errorf("%w: %s", domain.ErrStorageObjectNotFound, key)
+		}
+		return nil, fmt.Errorf("opening %s: %w", key, err)
+	}
+
 	return obj, nil
 }
 
-func (s *MinIOStorage) DownloadRawVideo(ctx context.Context, key string) (io.ReadCloser, error) {
-	return s.DownloadFile(ctx, s.bucketRaw, key)
-}
-
-func (s *MinIOStorage) GetPresignedURL(ctx context.Context, bucket, key string, expiry time.Duration) (string, error) {
-	reqParams := make(url.Values)
-	presignedURL, err := s.client.PresignedGetObject(ctx, bucket, key, expiry, reqParams)
+func (s *MinIO) Stat(ctx context.Context, key string) (FileInfo, error) {
+	bucket, object, err := s.locate(key)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate presigned URL for %s/%s: %w", bucket, key, err)
+		return FileInfo{}, err
 	}
-	return presignedURL.String(), nil
-}
 
-func (s *MinIOStorage) GetProcessedVideoURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
-	return s.GetPresignedURL(ctx, s.bucketProcessed, key, expiry)
-}
-
-func (s *MinIOStorage) GetThumbnailURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
-	return s.GetPresignedURL(ctx, s.bucketThumbs, key, expiry)
-}
-
-func (s *MinIOStorage) GetPublicURL(bucket, key string) string {
-	return fmt.Sprintf("/%s/%s", bucket, key)
-}
-
-func (s *MinIOStorage) DeleteFile(ctx context.Context, bucket, key string) error {
-	err := s.client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{})
+	info, err := s.client.StatObject(ctx, bucket, object, minio.StatObjectOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to delete file %s/%s: %w", bucket, key, err)
+		if isNoSuchKey(err) {
+			return FileInfo{}, fmt.Errorf("%w: %s", domain.ErrStorageObjectNotFound, key)
+		}
+		return FileInfo{}, fmt.Errorf("statting %s: %w", key, err)
+	}
+	return FileInfo{Size: info.Size, ModTime: info.LastModified}, nil
+}
+
+func (s *MinIO) Delete(ctx context.Context, key string) error {
+	bucket, object, err := s.locate(key)
+	if err != nil {
+		return err
+	}
+
+	if err := s.client.RemoveObject(ctx, bucket, object, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("deleting %s: %w", key, err)
 	}
 	return nil
 }
 
-func (s *MinIOStorage) DeleteRawVideo(ctx context.Context, key string) error {
-	return s.DeleteFile(ctx, s.bucketRaw, key)
-}
-
-func (s *MinIOStorage) DeleteProcessedVideo(ctx context.Context, key string) error {
-	return s.DeleteFile(ctx, s.bucketProcessed, key)
-}
-
-func (s *MinIOStorage) DeleteThumbnail(ctx context.Context, key string) error {
-	return s.DeleteFile(ctx, s.bucketThumbs, key)
-}
-
-func (s *MinIOStorage) ListFiles(ctx context.Context, bucket, prefix string) ([]string, error) {
-	var files []string
-
-	objectCh := s.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
-		Prefix:    prefix,
-		Recursive: true,
-	})
-
-	for object := range objectCh {
-		if object.Err != nil {
-			return nil, fmt.Errorf("error listing objects: %w", object.Err)
-		}
-		files = append(files, object.Key)
+func (s *MinIO) DeletePrefix(ctx context.Context, prefix string) error {
+	bucket, object, err := s.locate(prefix)
+	if err != nil {
+		return err
 	}
 
-	return files, nil
+	// The trailing slash keeps "transcoded/<id>" from also matching another
+	// object whose name merely starts with <id>.
+	if !strings.HasSuffix(object, "/") {
+		object += "/"
+	}
+
+	objects := s.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    object,
+		Recursive: true,
+	})
+	for obj := range objects {
+		if obj.Err != nil {
+			return fmt.Errorf("listing prefix %s: %w", prefix, obj.Err)
+		}
+		if err := s.client.RemoveObject(ctx, bucket, obj.Key, minio.RemoveObjectOptions{}); err != nil {
+			return fmt.Errorf("deleting %s/%s: %w", bucket, obj.Key, err)
+		}
+	}
+	return nil
 }
 
-func (s *MinIOStorage) FileExists(ctx context.Context, bucket, key string) (bool, error) {
-	_, err := s.client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+func (s *MinIO) Exists(ctx context.Context, key string) (bool, error) {
+	bucket, object, err := s.locate(key)
 	if err != nil {
-		errResponse := minio.ToErrorResponse(err)
-		if errResponse.Code == "NoSuchKey" {
+		return false, err
+	}
+
+	if _, err := s.client.StatObject(ctx, bucket, object, minio.StatObjectOptions{}); err != nil {
+		if isNoSuchKey(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to check file existence %s/%s: %w", bucket, key, err)
+		return false, fmt.Errorf("statting %s: %w", key, err)
 	}
 	return true, nil
 }
 
-func (s *MinIOStorage) GetFileInfo(ctx context.Context, bucket, key string) (*minio.ObjectInfo, error) {
-	info, err := s.client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get file info %s/%s: %w", bucket, key, err)
-	}
-	return &info, nil
-}
-
-func (s *MinIOStorage) CopyFile(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
-	src := minio.CopySrcOptions{
-		Bucket: srcBucket,
-		Object: srcKey,
-	}
-	dst := minio.CopyDestOptions{
-		Bucket: dstBucket,
-		Object: dstKey,
-	}
-
-	_, err := s.client.CopyObject(ctx, dst, src)
-	if err != nil {
-		return fmt.Errorf("failed to copy file from %s/%s to %s/%s: %w", srcBucket, srcKey, dstBucket, dstKey, err)
-	}
-	return nil
-}
-
-func (s *MinIOStorage) BucketRaw() string {
-	return s.bucketRaw
-}
-
-func (s *MinIOStorage) BucketProcessed() string {
-	return s.bucketProcessed
-}
-
-func (s *MinIOStorage) BucketThumbs() string {
-	return s.bucketThumbs
-}
-
-func (s *MinIOStorage) HealthCheck(ctx context.Context) error {
-	_, err := s.client.ListBuckets(ctx)
-	if err != nil {
-		return fmt.Errorf("MinIO health check failed: %w", err)
-	}
-	return nil
+func isNoSuchKey(err error) bool {
+	return minio.ToErrorResponse(err).Code == "NoSuchKey"
 }

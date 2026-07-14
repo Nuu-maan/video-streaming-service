@@ -1,0 +1,178 @@
+# Production stack: nginx -> api, worker, postgres, redis, minio.
+#
+# docker-compose.yml stays infrastructure-only for local development (Go runs
+# on the host); this file is the one that actually runs the service.
+#
+#   cp .env.example .env   # then set real secrets
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# All configuration comes from .env via env_file / ${...} interpolation; no
+# secret is baked into an image. The environment: blocks below only override
+# the handful of values that differ inside the compose network (service
+# hostnames and container filesystem paths).
+
+name: video-streaming-prod
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-video_streaming}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-video_streaming}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No password: redis is only reachable on the private compose network. If
+    # you add --requirepass, also set REDIS_PASSWORD in .env and adjust this
+    # healthcheck to authenticate.
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - backend
+
+  # Migrations run as a one-shot job, not from inside the API process: with N
+  # API replicas, every replica racing `migrate up` on boot is a recipe for
+  # duplicate-DDL failures. This service runs exactly once per `up`, and the
+  # API waits for it to exit 0 before starting.
+  migrate:
+    image: migrate/migrate:v4.18.3
+    restart: "no"
+    command:
+      - "-path=/migrations"
+      # DB_PASSWORD lands inside a URL here: if it contains characters like
+      # @ : / ? #, percent-encode them in .env or migration will fail to parse.
+      - "-database=postgres://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-video_streaming}?sslmode=${DB_SSLMODE:-disable}"
+      - "up"
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      MINIO_ENDPOINT: minio:9000
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8080"
+      STORAGE_UPLOAD_PATH: /data/uploads
+      STORAGE_THUMBNAIL_PATH: /data/uploads/thumbnails
+      STORAGE_TRANSCODED_PATH: /data/uploads/transcoded
+    volumes:
+      # LOAD-BEARING: api and worker MUST share this volume. The worker writes
+      # HLS playlists and segments here and the API (and nginx) serve them; on
+      # separate filesystems every playlist request 404s and nothing streams.
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # No host port on purpose; nginx is the only public entrypoint. Uncomment
+    # to reach the API directly for debugging.
+    # ports:
+    #   - "8080:8080"
+    networks:
+      - backend
+
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      MINIO_ENDPOINT: minio:9000
+      STORAGE_UPLOAD_PATH: /data/uploads
+      STORAGE_THUMBNAIL_PATH: /data/uploads/thumbnails
+      STORAGE_TRANSCODED_PATH: /data/uploads/transcoded
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx/api.conf:/etc/nginx/nginx.conf:ro
+      # The uploads volume is deliberately NOT mounted here. nginx serving those
+      # files directly would bypass the API's access control and expose private
+      # videos and raw originals to anyone who could guess a path; see the long
+      # comment in deploy/nginx/api.conf. nginx proxies media like anything else.
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  uploads:
+
+networks:
+  backend:
+    driver: bridge

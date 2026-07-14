@@ -219,7 +219,15 @@ func (s *TranscodingService) ProcessVideo(ctx context.Context, videoID string) e
 				"video_id": videoID,
 			})
 		} else {
-			hlsMasterPath := fmt.Sprintf("/uploads/processed/%s/hls/master.m3u8", videoID)
+			// The storage key the master playlist was written to — where the bytes
+			// are, not how a client reaches them. This column used to hold
+			// "/uploads/processed/<id>/hls/master.m3u8", a URL under a directory
+			// nothing has ever written to (the worker writes to
+			// STORAGE_TRANSCODED_PATH), and it was served straight to clients as
+			// hls_master_path, so every API response advertised a guaranteed 404.
+			// The client-facing URL is now derived from the video ID at
+			// serialisation time; see domain.VideoHLSURL.
+			hlsMasterPath := fmt.Sprintf("transcoded/%s/hls/master.m3u8", videoID)
 			if err := s.videoRepo.UpdateHLSInfo(ctx, id, hlsMasterPath, true); err != nil {
 				s.log.Error(ctx, "failed to update HLS info", err, map[string]interface{}{
 					"video_id": videoID,

@@ -18,11 +18,18 @@ import (
 // previous listing queries each hand-wrote their own column list, and two of
 // them silently omitted the HLS columns, so a video fetched by search reported
 // HLSReady=false regardless of its real state.
+//
+// The discovery and engagement columns are COALESCEd because migrations 8 and 9
+// added them as nullable: a row written before those migrations has NULL there,
+// not 0, and scanning a NULL into an int64 fails.
 const videoColumns = `
 	id, user_id, title, description, filename, file_path, file_size, mime_type,
 	duration, original_resolution, thumbnail_path, status, visibility,
 	transcoding_progress, available_qualities, hls_master_path, hls_ready,
-	streaming_protocol, created_at, updated_at, processed_at`
+	streaming_protocol,
+	COALESCE(category, ''), tags, COALESCE(language, ''),
+	COALESCE(view_count, 0), COALESCE(like_count, 0), COALESCE(comment_count, 0),
+	created_at, updated_at, processed_at`
 
 // PostgresVideoRepository is the PostgreSQL implementation of
 // repository.VideoRepository.
@@ -44,33 +51,51 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+// videoScanDest returns the scan destinations for videoColumns, in order.
+//
+// It is the counterpart to videoColumns and the two must be edited together, so
+// they live side by side. Every query that selects videoColumns scans through
+// here — including listings elsewhere in the package that join videos to a
+// membership table and append their own destinations (see scanVideoWith). Those
+// used to keep a second, hand-copied destination list, which silently drifted
+// out of sync the moment a column was added and failed at runtime with
+// "number of field descriptions must equal number of destinations".
+func videoScanDest(v *domain.Video) []any {
+	return []any{
+		&v.ID,
+		&v.UserID,
+		&v.Title,
+		&v.Description,
+		&v.Filename,
+		&v.FilePath,
+		&v.FileSize,
+		&v.MimeType,
+		&v.Duration,
+		&v.OriginalResolution,
+		&v.ThumbnailPath,
+		&v.Status,
+		&v.Visibility,
+		&v.TranscodingProgress,
+		&v.AvailableQualities,
+		&v.HLSMasterPath,
+		&v.HLSReady,
+		&v.StreamingProtocol,
+		&v.Category,
+		&v.Tags,
+		&v.Language,
+		&v.ViewCount,
+		&v.LikeCount,
+		&v.CommentCount,
+		&v.CreatedAt,
+		&v.UpdatedAt,
+		&v.ProcessedAt,
+	}
+}
+
 // scanVideo reads one row in videoColumns order.
 func scanVideo(row scanner) (*domain.Video, error) {
 	var video domain.Video
-	err := row.Scan(
-		&video.ID,
-		&video.UserID,
-		&video.Title,
-		&video.Description,
-		&video.Filename,
-		&video.FilePath,
-		&video.FileSize,
-		&video.MimeType,
-		&video.Duration,
-		&video.OriginalResolution,
-		&video.ThumbnailPath,
-		&video.Status,
-		&video.Visibility,
-		&video.TranscodingProgress,
-		&video.AvailableQualities,
-		&video.HLSMasterPath,
-		&video.HLSReady,
-		&video.StreamingProtocol,
-		&video.CreatedAt,
-		&video.UpdatedAt,
-		&video.ProcessedAt,
-	)
-	if err != nil {
+	if err := row.Scan(videoScanDest(&video)...); err != nil {
 		return nil, err
 	}
 	return &video, nil

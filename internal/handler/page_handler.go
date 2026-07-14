@@ -75,6 +75,14 @@ func (h *PageHandler) VideoPlayerPage(c *gin.Context) {
 		return
 	}
 
+	// These pages are unauthenticated, so a private video reads as absent here
+	// — same as the API answers an anonymous caller. Without this the page
+	// leaks a private video's title and description to anyone with its ID.
+	if video.Visibility == domain.VisibilityPrivate {
+		c.String(404, "Video not found")
+		return
+	}
+
 	component := templates.VideoPlayerPage(video)
 	component.Render(c.Request.Context(), c.Writer)
 }

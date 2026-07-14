@@ -59,7 +59,7 @@
 <body>
 
 <h1>API Test Console</h1>
-<div class="sub">Drives every endpoint end-to-end. Token is kept in <code>localStorage</code> and sent as <code>Authorization: Bearer</code>.</div>
+<div class="sub">Drives every endpoint end-to-end against <code>/api/v1</code>. Tokens are kept in <code>localStorage</code>; the access token is sent as <code>Authorization: Bearer</code>, the refresh token only ever goes to <code>/auth/refresh</code> and <code>/auth/logout</code>.</div>
 
 <div class="grid">
 
@@ -80,6 +80,7 @@
     </div>
     <div class="row">
       <button class="ghost" onclick="me()">GET /me</button>
+      <button class="ghost" onclick="refreshToken()">Refresh</button>
       <button class="ghost" onclick="logout()">Logout</button>
     </div>
 
@@ -129,14 +130,15 @@
     <h2>4 · Admin <span class="badge warn">needs permission</span></h2>
     <div class="sub" style="margin:0 0 6px;font-size:12px">
       A fresh account is role <code>user</code> and will get <code>403</code> here — that is the RBAC working.
-      Promote yourself in SQL to test: <code>UPDATE users SET role='admin' WHERE username='alice';</code>
+      Promote yourself with the admin CLI, then log in again for a token with the new role:
+      <code>make admin ARGS='promote --username alice --role admin'</code>
     </div>
 
-    <button class="ghost" onclick="call('GET','/api/admin/queue/stats','adminOut')">Queue stats</button>
-    <button class="ghost" onclick="call('GET','/api/admin/workers','adminOut')">Workers</button>
-    <button class="ghost" onclick="call('GET','/api/admin/analytics/dashboard','adminOut')">Analytics dashboard</button>
-    <button class="ghost" onclick="call('GET','/api/admin/monitoring/metrics','adminOut')">Monitoring metrics</button>
-    <button class="ghost" onclick="call('GET','/api/admin/reports/pending','adminOut')">Pending reports</button>
+    <button class="ghost" onclick="call('GET','/api/v1/admin/queue/stats','adminOut')">Queue stats</button>
+    <button class="ghost" onclick="call('GET','/api/v1/admin/workers','adminOut')">Workers</button>
+    <button class="ghost" onclick="call('GET','/api/v1/admin/analytics/dashboard','adminOut')">Analytics dashboard</button>
+    <button class="ghost" onclick="call('GET','/api/v1/admin/monitoring/metrics','adminOut')">Monitoring metrics</button>
+    <button class="ghost" onclick="call('GET','/api/v1/admin/reports/pending','adminOut')">Pending reports</button>
     <pre id="adminOut">—</pre>
   </section>
 
@@ -154,7 +156,9 @@
 
 <script>
 const TOKEN_KEY = 'vss.token';
+const REFRESH_KEY = 'vss.refresh';
 const token = () => localStorage.getItem(TOKEN_KEY);
+const refreshTok = () => localStorage.getItem(REFRESH_KEY);
 
 function headers(extra = {}) {
   const h = { ...extra };
@@ -201,40 +205,60 @@ async function rawText(path, outId) {
 }
 
 function saveToken(result) {
-  const tok = result.body?.data?.access_token;
-  if (tok) {
-    localStorage.setItem(TOKEN_KEY, tok);
-    const u = result.body.data.user;
-    document.getElementById('who').textContent = `Signed in as ${u.username} (role: ${u.role})`;
+  const d = result.body?.data;
+  if (d?.access_token) {
+    localStorage.setItem(TOKEN_KEY, d.access_token);
+    if (d.refresh_token) localStorage.setItem(REFRESH_KEY, d.refresh_token);
+    const u = d.user;
+    if (u) document.getElementById('who').textContent = `Signed in as ${u.username} (role: ${u.role})`;
   }
 }
 
 async function register() {
-  const r = await call('POST', '/api/auth/register', 'authOut', {
+  const r = await call('POST', '/api/v1/auth/register', 'authOut', {
     username: val('username'), email: val('email'), password: val('password'),
   });
   saveToken(r);
 }
 
+// Login takes an *identifier* — a username or an email — not "username".
 async function login() {
-  const r = await call('POST', '/api/auth/login', 'authOut', {
+  const r = await call('POST', '/api/v1/auth/login', 'authOut', {
     identifier: val('username'), password: val('password'),
   });
   saveToken(r);
 }
 
 async function me() {
-  const r = await call('GET', '/api/auth/me', 'authOut');
+  const r = await call('GET', '/api/v1/auth/me', 'authOut');
   if (r.status === 200) {
     const u = r.body.data;
     document.getElementById('who').textContent = `Signed in as ${u.username} (role: ${u.role})`;
   }
 }
 
-function logout() {
+// Exchange the stored refresh token for a new pair. An access token is
+// rejected here with 401 — the two are not interchangeable.
+async function refreshToken() {
+  const rt = refreshTok();
+  if (!rt) return show('authOut', 0, 'No refresh token stored — log in first.');
+  const r = await call('POST', '/api/v1/auth/refresh', 'authOut', { refresh_token: rt });
+  saveToken(r);
+}
+
+// Real logout: the server revokes the access token (and the refresh token
+// when the body carries one) — clearing localStorage alone would leave both
+// usable until they expire.
+async function logout() {
+  if (token()) {
+    const body = refreshTok() ? { refresh_token: refreshTok() } : {};
+    await call('POST', '/api/v1/auth/logout', 'authOut', body);
+  } else {
+    show('authOut', 200, 'No session to revoke.');
+  }
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
   document.getElementById('who').textContent = 'Not signed in.';
-  show('authOut', 200, 'Token cleared.');
 }
 
 // Upload, then poll the status endpoint until the worker finishes.
@@ -250,7 +274,7 @@ async function upload() {
   form.append('visibility', val('visibility'));
 
   show('uploadOut', 100, 'Uploading…');
-  const res = await fetch('/api/videos/upload', { method: 'POST', headers: headers(), body: form });
+  const res = await fetch('/api/v1/videos/upload', { method: 'POST', headers: headers(), body: form });
   const body = await res.json().catch(() => ({}));
   show('uploadOut', res.status, body);
 
@@ -264,7 +288,7 @@ async function pollStatus(id) {
   const bar = document.getElementById('progress');
 
   for (let i = 0; i < 600; i++) {
-    const r = await call('GET', `/api/videos/${id}/status`);
+    const r = await call('GET', `/api/v1/videos/${id}/status`);
     const d = r.body?.data;
     if (!d) break;
 
@@ -275,7 +299,7 @@ async function pollStatus(id) {
       document.getElementById('uploadOut').innerHTML +=
         `\n\n<span class="badge ok">READY</span> ` +
         `<a href="/videos/${id}" target="_blank">open player</a> · ` +
-        `<a href="/api/videos/${id}/hls/master.m3u8" target="_blank">master.m3u8</a>`;
+        `<a href="/api/v1/videos/${id}/hls/master.m3u8" target="_blank">master.m3u8</a>`;
       listVideos();
       return;
     }
@@ -293,7 +317,7 @@ async function listVideos() {
   if (val('search')) params.set('search', val('search'));
   if (document.getElementById('mine').checked) params.set('mine', 'true');
 
-  const r = await call('GET', '/api/videos?' + params, 'videosOut');
+  const r = await call('GET', '/api/v1/videos?' + params, 'videosOut');
   renderVideos(r.body?.data || []);
 }
 
@@ -313,7 +337,7 @@ function renderVideos(videos) {
 }
 
 async function del(id) {
-  await call('DELETE', '/api/videos/' + id, 'videosOut');
+  await call('DELETE', '/api/v1/videos/' + id, 'videosOut');
   listVideos();
 }
 

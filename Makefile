@@ -1,6 +1,10 @@
 .PHONY: help dev worker build build-worker test check vet fmt fmt-check lint run \
 	migrate-up migrate-down migrate-create templ docker-up docker-down clean \
-	install-tools run-all test-player test-hls
+	install-tools run-all test-player test-hls docker-build docker-up-prod \
+	docker-down-prod admin
+
+# Stamped into the binaries via -ldflags -X main.version.
+VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
 help:
 	@echo "Available commands:"
@@ -15,8 +19,12 @@ help:
 	@echo "  make migrate-down  - Rollback database migrations"
 	@echo "  make migrate-create NAME=xxx - Create new migration"
 	@echo "  make templ         - Generate Templ templates"
-	@echo "  make docker-up     - Start Docker services"
+	@echo "  make docker-up     - Start Docker services (dev infrastructure only)"
 	@echo "  make docker-down   - Stop Docker services"
+	@echo "  make docker-build  - Build production api and worker images"
+	@echo "  make docker-up-prod   - Start the full production stack"
+	@echo "  make docker-down-prod - Stop the production stack"
+	@echo "  make admin ARGS='...' - Run the operator CLI (e.g. ARGS='promote --username alice --role admin')"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make install-tools - Install required tools"
 	@echo "  make test-player VIDEO_ID=xxx - Open video player in browser"
@@ -87,6 +95,27 @@ docker-up:
 docker-down:
 	@docker-compose down
 	@echo "Docker services stopped!"
+
+docker-build:
+	@docker build --target api    --build-arg VERSION=$(VERSION) -t video-streaming-api:$(VERSION)    -t video-streaming-api:latest .
+	@docker build --target worker --build-arg VERSION=$(VERSION) -t video-streaming-worker:$(VERSION) -t video-streaming-worker:latest .
+
+# The prod stack reads .env; refuse to start without one rather than let the
+# compose interpolation silently fall back to development defaults.
+docker-up-prod:
+	@test -f .env || (echo ".env not found — copy .env.example and set real secrets first"; exit 1)
+	@docker-compose -f docker-compose.prod.yml up -d --build
+	@echo "Production stack started"
+
+docker-down-prod:
+	@docker-compose -f docker-compose.prod.yml down
+	@echo "Production stack stopped"
+
+# Operator CLI. Local: make admin ARGS='create --username alice --email a@b.c --password ...'
+# In the prod stack the binary ships inside the api image:
+#   docker compose -f docker-compose.prod.yml exec api admin promote --username alice --role admin
+admin:
+	@go run ./cmd/admin $(ARGS)
 
 clean:
 	@rm -rf bin/

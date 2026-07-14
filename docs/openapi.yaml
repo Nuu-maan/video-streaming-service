@@ -1,0 +1,3912 @@
+openapi: 3.1.0
+
+info:
+  title: Video Streaming Service API
+  version: 1.0.0
+  contact:
+    name: video-streaming-service
+    url: https://github.com/Nuu-maan/video-streaming-service
+  description: |
+    Standalone JSON API for a video platform: accounts, uploads, transcoding,
+    HLS/MP4 playback, comments, playlists, subscriptions, search, moderation
+    and admin analytics. It is designed to be hosted on its own and consumed
+    by a separate frontend (React, Next.js, Vue, ...) running on a different
+    origin.
+
+    ## The three things to know first
+
+    1. **Auth is JWT Bearer.** Log in at `POST /auth/login` (the body field is
+       `identifier` — a username *or* an email — plus `password`) and send
+       `Authorization: Bearer <access_token>` on every authenticated call.
+       Access tokens live 900 s; exchange the `refresh_token` at
+       `POST /auth/refresh` for a new pair. A refresh token is *not* usable as
+       an API credential, and an access token is rejected at `/auth/refresh`.
+
+    2. **Every JSON response is wrapped in an envelope.**
+       Success: `{"success": true, "data": ...}`.
+       Lists (including `/search`): `{"success": true, "data": [...], "pagination": {"total", "page", "limit", "total_pages", "has_next", "has_previous"}}`.
+       Errors: `{"success": false, "error": {"code": "...", "message": "..."}}`.
+       Media routes (`.m3u8`, `.ts`, MP4, JPEG) return raw bytes, never the envelope.
+
+    3. **Media URLs come back on the video object.** A ready video exposes
+       computed `hls_url` (feed it to hls.js / Safari) and `thumbnail_url`.
+       Server-side storage paths are deliberately withheld. Range requests are
+       honoured on `/videos/{id}/stream/{quality}` (206 Partial Content), and
+       CORS exposes `Content-Length`, `Content-Range`, `Accept-Ranges` and
+       `X-Request-ID` so hls.js and seeking work cross-origin.
+
+    ## Other conventions
+
+    - The canonical prefix is `/api/v1`. Bare `/api` is a legacy alias onto the
+      same handlers; new integrations should use `/api/v1`.
+    - Pagination: `page` (default 1, min 1) and `limit` (default 20, max 100),
+      clamped silently. Exception: `/admin/analytics/top-videos` defaults to 10,
+      caps at 50, and rejects a malformed `limit` with 400.
+    - **Private videos and playlists answer 404 — never 403 — to anyone but
+      their owner**, on every read and every media route, so their existence is
+      not leaked. `unlisted` content is reachable by anyone with the link.
+    - Playback does **not** auto-count views. Record a view explicitly with
+      `POST /videos/{id}/view` (anonymous callers must send a `session_id`);
+      it answers 201 when counted and 200 when deduplicated.
+    - Roles: `guest`, `user`, `premium`, `moderator`, `admin`. Admin accounts
+      are bootstrapped with the `cmd/admin` CLI
+      (`admin promote --username alice --role admin`), not raw SQL.
+    - CORS origins are allowlisted server-side; allowed request headers include
+      `Authorization`, `Content-Type` and `Range`.
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+  - url: "{scheme}://{host}/api/v1"
+    description: Production
+    variables:
+      scheme:
+        default: https
+        enum: [https, http]
+      host:
+        default: api.example.com
+        description: Wherever you host the API binary
+
+tags:
+  - name: Auth
+    description: Register, log in, refresh, and end sessions.
+  - name: Account
+    description: Email verification, password recovery and password change.
+  - name: Videos
+    description: Video metadata — list, read, upload, delete, processing status.
+  - name: Streaming
+    description: >-
+      Raw media: HLS playlists and segments, progressive MP4 (Range → 206),
+      and thumbnails. These routes return bytes, not the JSON envelope.
+  - name: Social
+    description: Comments, subscriptions, playlists and notifications.
+  - name: Discovery
+    description: Search, suggestions, categories, trending, related and the subscription feed.
+  - name: Engagement
+    description: Views, resume progress, likes, watch-later and watch history.
+  - name: Moderation
+    description: User-filed reports, report review, and user bans.
+  - name: Admin
+    description: Queue operations, platform analytics and infrastructure monitoring.
+  - name: Ops
+    description: Health, Prometheus metrics and this documentation. Served at the server root, outside /api/v1.
+
+security: []
+
+paths:
+  # ─────────────────────────── Auth ───────────────────────────
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Create an account and return tokens
+      description: >-
+        Registers a new account and immediately returns a token pair, so no
+        separate login round-trip is needed. Usernames must match
+        `^[a-zA-Z0-9_]{3,30}$`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 30
+                  pattern: "^[a-zA-Z0-9_]{3,30}$"
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "403":
+          description: The account is banned (`USER_BANNED`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Username or email already taken (`ALREADY_EXISTS`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Exchange credentials for tokens
+      description: >-
+        **The credential field is `identifier`, not `username`** — it accepts a
+        username or an email. Unknown account and wrong password return the
+        same 401 body, so account existence cannot be probed.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier:
+                  type: string
+                  description: Username **or** email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Token pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The account is banned (`USER_BANNED`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Exchange a refresh token for a new token pair
+      description: >-
+        Takes `{"refresh_token": "..."}` and returns a full new token pair.
+        An **access** token presented here is rejected with 401, just as a
+        **refresh** token presented as an API credential is rejected with 401.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPairResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid, expired or revoked refresh token — or an access token was presented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Return the authenticated caller's own account
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the presented access token
+      description: >-
+        Revokes the access token in the `Authorization` header. The body is
+        optional; when it carries a `refresh_token`, that token is revoked too.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      operationId: logoutAll
+      summary: Revoke every outstanding session for the caller, on every device
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ─────────────────────────── Account ───────────────────────────
+
+  /auth/verify-email/send:
+    post:
+      tags: [Account]
+      operationId: sendVerificationEmail
+      summary: (Re)send a verification email
+      description: Sends the verification mail to the caller's own registered address.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Verification email sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Address already verified (`EMAIL_ALREADY_VERIFIED`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/verify-email:
+    post:
+      tags: [Account]
+      operationId: verifyEmail
+      summary: Consume a verification token and mark the account verified
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Bad or expired token (`INVALID_TOKEN`) or malformed body (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/forgot-password:
+    post:
+      tags: [Account]
+      operationId: forgotPassword
+      summary: Start a password reset
+      description: >-
+        Always answers 200 with the same body whether or not the address is
+        registered, so accounts cannot be enumerated.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Accepted (same body regardless of whether the address exists)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/reset-password:
+    post:
+      tags: [Account]
+      operationId: resetPassword
+      summary: Consume a reset token and set a new password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Password reset; log in again with the new password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Bad token (`INVALID_TOKEN`) or weak password (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/change-password:
+    post:
+      tags: [Account]
+      operationId: changePassword
+      summary: Change password after verifying the current one
+      description: Carries the stricter auth rate limit on top of the normal API budget.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        "200":
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Wrong current password (`INVALID_CURRENT_PASSWORD`) or weak new password (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Videos ───────────────────────────
+
+  /videos:
+    get:
+      tags: [Videos]
+      operationId: listVideos
+      summary: List videos
+      description: >-
+        Auth is optional. Anonymous callers see only public videos; with a
+        token and `mine=true` the filter switches to the caller's own videos,
+        all visibilities included.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/VideoStatus"
+        - name: mine
+          in: query
+          description: '`"true"` lists the caller''s own videos (requires a token)'
+          schema:
+            type: string
+            enum: ["true"]
+      responses:
+        "200":
+          description: Page of videos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Video"
+        "500":
+          description: Internal error (`INTERNAL_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/upload:
+    post:
+      tags: [Videos]
+      operationId: uploadVideo
+      summary: Upload a video for transcoding
+      description: >-
+        Multipart upload, queued for transcoding by the worker. Requires the
+        `upload_video` permission and carries an extra upload rate limit.
+        Title 1–255 chars. The size limit is deployment-configured
+        (`STORAGE_MAX_FILE_SIZE`, default 2 GiB; hard ceiling 10 GiB). The
+        response video starts in status `uploading` — poll
+        `GET /videos/{id}/status` for progress.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [video, title]
+              properties:
+                video:
+                  type: string
+                  format: binary
+                  description: The video file
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                description:
+                  type: string
+                visibility:
+                  $ref: "#/components/schemas/VideoVisibility"
+      responses:
+        "201":
+          description: Video accepted (status `uploading`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: File exceeds the configured size limit (`FILE_TOO_LARGE`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Not an accepted video format (`INVALID_FORMAT`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Videos]
+      operationId: getVideo
+      summary: Get one video
+      description: >-
+        Auth is optional; a token lets the owner read their own private video.
+        **Private videos answer 404 — never 403 — to everyone else**, so their
+        existence is not leaked. Unlisted videos resolve for anyone with the
+        link. A ready video carries `hls_url` and `thumbnail_url` for playback.
+      responses:
+        "200":
+          description: The video
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Videos]
+      operationId: deleteVideo
+      summary: Delete a video
+      description: >-
+        Owner only, unless the caller holds `delete_any_video` (checked in the
+        handler).
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Video deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /videos/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Videos]
+      operationId: getVideoStatus
+      summary: Transcoding progress for a video
+      description: >-
+        Poll this after an upload. Auth is optional; private videos 404 for
+        non-owners exactly like `GET /videos/{id}`.
+      responses:
+        "200":
+          description: Processing status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/VideoStatusReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Engagement ───────────────────────────
+
+  /videos/{id}/view:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    post:
+      tags: [Engagement]
+      operationId: recordView
+      summary: Record one view (explicit — playback does not auto-count)
+      description: >-
+        Views are deduplicated in Redis. Auth is optional: authenticated
+        callers are deduped by user id; **anonymous callers must send a
+        `session_id`**. The body must be JSON, even if just `{}` for an
+        authenticated caller. **201 = counted, 200 = deduplicated repeat.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quality:
+                  type: string
+                source:
+                  type: string
+                session_id:
+                  type: string
+                  description: Required for anonymous callers
+      responses:
+        "201":
+          description: View counted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ViewResult"
+        "200":
+          description: Duplicate within the dedupe window — not counted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ViewResult"
+        "400":
+          description: Missing `session_id` for an anonymous caller, or non-JSON body (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /videos/{id}/progress:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    post:
+      tags: [Engagement]
+      operationId: saveProgress
+      summary: Upsert the caller's resume position
+      description: >-
+        `position` and `duration` are non-negative seconds and **`position`
+        must lie within `duration`**, otherwise the request is a 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                position:
+                  type: integer
+                  minimum: 0
+                  description: Seconds; must not exceed `duration`
+                duration:
+                  type: integer
+                  minimum: 0
+                  description: Seconds
+                completed:
+                  type: boolean
+      responses:
+        "200":
+          description: Progress saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Negative values, or `position` beyond `duration` (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /videos/{id}/like:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    put:
+      tags: [Engagement]
+      operationId: setLike
+      summary: Upsert the caller's rating
+      description: >-
+        `is_like: false` is a dislike. The field is a pointer server-side, so
+        the key must be present explicitly — `true` or `false`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_like]
+              properties:
+                is_like:
+                  type: boolean
+                  description: true = like, false = dislike; the key is required
+      responses:
+        "200":
+          description: The stored rating
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Like"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [Engagement]
+      operationId: getLike
+      summary: Get the caller's current rating of a video
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's rating
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Like"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not rated (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Engagement]
+      operationId: removeLike
+      summary: Clear the caller's rating of a video
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Rating removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not rated (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/watch-later:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    put:
+      tags: [Engagement]
+      operationId: addWatchLater
+      summary: Save a video to watch-later (idempotent)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Engagement]
+      operationId: removeWatchLater
+      summary: Remove a video from watch-later
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not in the list (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/watch-later:
+    get:
+      tags: [Engagement]
+      operationId: listWatchLater
+      summary: The caller's watch-later list, most recently saved first
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of saved videos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WatchLaterItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/history:
+    get:
+      tags: [Engagement]
+      operationId: getHistory
+      summary: Watch history, most recently watched first
+      description: An empty history serialises as `[]`, never `null`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of history entries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WatchHistory"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Engagement]
+      operationId: clearHistory
+      summary: Delete the caller's entire watch history
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: History cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/history/{videoId}:
+    delete:
+      tags: [Engagement]
+      operationId: deleteHistoryEntry
+      summary: Remove one video from the caller's watch history
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: videoId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Entry removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Streaming ───────────────────────────
+
+  /videos/{id}/hls/master.m3u8:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Streaming]
+      operationId: getHlsMaster
+      summary: HLS master playlist
+      description: >-
+        Feed this URL (it comes back as `hls_url` on the video object) to
+        hls.js or a native HLS player. Auth is optional; a private video 404s
+        for non-owners. Returns raw m3u8 text — not the JSON envelope.
+        Cached `public, max-age=3600`. Streaming routes carry a much higher
+        rate-limit budget than the rest of the API.
+      responses:
+        "200":
+          description: Master playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: Video not found / not visible (`NOT_FOUND`), transcoding not finished (`HLS_NOT_READY`), or playlist missing (`PLAYLIST_NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/hls/{quality}/playlist.m3u8:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+      - $ref: "#/components/parameters/Quality"
+    get:
+      tags: [Streaming]
+      operationId: getHlsQualityPlaylist
+      summary: HLS media playlist for one quality
+      description: Auth optional; private videos 404 for non-owners. Raw m3u8 text.
+      responses:
+        "200":
+          description: Media playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          description: Quality not one of 360p|480p|720p|1080p (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "`NOT_FOUND`, `HLS_NOT_READY` or `PLAYLIST_NOT_FOUND`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/hls/{quality}/{segment}:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+      - $ref: "#/components/parameters/Quality"
+      - name: segment
+        in: path
+        required: true
+        description: Segment file name; must match `^segment_\d{3}\.ts$`
+        schema:
+          type: string
+          pattern: '^segment_\d{3}\.ts$'
+    get:
+      tags: [Streaming]
+      operationId: getHlsSegment
+      summary: HLS segment
+      description: >-
+        MPEG-TS bytes with immutable cache headers
+        (`max-age=31536000, immutable`). Served via `http.ServeContent`, so
+        `Range` requests answer 206. Auth optional; private videos 404 for
+        non-owners.
+      responses:
+        "200":
+          description: Segment bytes
+          content:
+            video/MP2T:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content for a `Range` request
+          content:
+            video/MP2T:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: "`SEGMENT_NOT_FOUND` or `HLS_NOT_READY`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/stream/{quality}:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+      - $ref: "#/components/parameters/Quality"
+    get:
+      tags: [Streaming]
+      operationId: streamMp4
+      summary: Progressive MP4 fallback
+      description: >-
+        Plain MP4 for players without HLS. **Honours `Range` and answers 206**,
+        which is what makes seeking work; CORS exposes `Content-Range` and
+        `Accept-Ranges` so this works cross-origin. The quality must be present
+        in the video's `available_qualities` and the video must be `ready`.
+        Auth optional; private videos 404 for non-owners.
+      parameters:
+        - name: Range
+          in: header
+          required: false
+          description: 'Standard byte range, e.g. `bytes=0-1023`'
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whole file
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content for a `Range` request (with `Content-Range`)
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Quality invalid or not in `available_qualities` (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "`NOT_FOUND`, `VIDEO_NOT_READY` or `FILE_NOT_FOUND`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/thumbnail:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Streaming]
+      operationId: getThumbnail
+      summary: Poster image
+      description: >-
+        JPEG with immutable cache headers (`max-age=86400`). A thumbnail is a
+        frame of the video, so it is exactly as private as the video: same
+        visibility check, private 404s for non-owners. This URL comes back as
+        `thumbnail_url` on the video object.
+      responses:
+        "200":
+          description: JPEG bytes
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: Video not visible, or thumbnail not generated yet (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────────── Social: comments ───────────────────────────
+
+  /videos/{id}/comments:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Social]
+      operationId: listComments
+      summary: Page of a video's top-level comments, pinned first
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of comments
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Comment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Social]
+      operationId: createComment
+      summary: Post a comment or a reply
+      description: >-
+        Set `parent_id` to reply; the parent must be a comment on the same
+        video.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                parent_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: The created comment
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Comment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Video or parent comment not found (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /comments/{id}/replies:
+    parameters:
+      - $ref: "#/components/parameters/CommentId"
+    get:
+      tags: [Social]
+      operationId: listReplies
+      summary: Page of a comment's replies, oldest first
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of replies
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Comment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /comments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CommentId"
+    patch:
+      tags: [Social]
+      operationId: updateComment
+      summary: Edit a comment's content (author only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+      responses:
+        "200":
+          description: The updated comment
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Comment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Social]
+      operationId: deleteComment
+      summary: Soft-delete a comment
+      description: >-
+        Allowed for the comment's author, the video's owner, or a caller with
+        `moderate_content` — resolved inside the handler.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Comment deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Social: subscriptions ───────────────────────────
+
+  /users/{id}/subscribe:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [Social]
+      operationId: subscribe
+      summary: Subscribe to a creator (idempotent)
+      description: Subscribing to yourself is a 400.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Self-subscription (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Social]
+      operationId: unsubscribe
+      summary: Remove the caller's subscription to a creator
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Not subscribed (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /users/{id}/subscribers:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [Social]
+      operationId: listSubscribers
+      summary: Page of a creator's subscribers
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of subscribers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SubscriptionEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/subscriptions:
+    get:
+      tags: [Social]
+      operationId: listMySubscriptions
+      summary: Creators the caller follows
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of subscriptions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SubscriptionEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ─────────────────────────── Social: playlists ───────────────────────────
+
+  /playlists:
+    post:
+      tags: [Social]
+      operationId: createPlaylist
+      summary: Create a playlist owned by the caller
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                description:
+                  type: string
+                visibility:
+                  $ref: "#/components/schemas/VideoVisibility"
+      responses:
+        "201":
+          description: The created playlist
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Playlist"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /playlists/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PlaylistId"
+    get:
+      tags: [Social]
+      operationId: getPlaylist
+      summary: Get a playlist
+      description: >-
+        Auth is optional. A private playlist resolves only for its owner;
+        everyone else gets 404 (never 403).
+      responses:
+        "200":
+          description: The playlist
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Playlist"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Social]
+      operationId: updatePlaylist
+      summary: Edit playlist metadata (owner only)
+      description: All fields optional, but at least one must be present.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                description:
+                  type: string
+                visibility:
+                  $ref: "#/components/schemas/VideoVisibility"
+      responses:
+        "200":
+          description: The updated playlist
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Playlist"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Social]
+      operationId: deletePlaylist
+      summary: Delete a playlist (owner only)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Playlist deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /playlists/{id}/videos:
+    parameters:
+      - $ref: "#/components/parameters/PlaylistId"
+    post:
+      tags: [Social]
+      operationId: addPlaylistVideo
+      summary: Append a video to the end of a playlist (owner only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [video_id]
+              properties:
+                video_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: The playlist entry
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlaylistVideo"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Playlist or video not found (`NOT_FOUND` / `PLAYLIST_NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already in the playlist (`ALREADY_IN_PLAYLIST`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: [Social]
+      operationId: listPlaylistVideos
+      summary: A playlist's videos in position order
+      description: >-
+        Auth is optional; visibility follows the playlist — a private playlist
+        404s for non-owners.
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of playlist items
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/PlaylistItem"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /playlists/{id}/videos/{videoId}:
+    parameters:
+      - $ref: "#/components/parameters/PlaylistId"
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Social]
+      operationId: removePlaylistVideo
+      summary: Remove a video from a playlist (owner only)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/playlists:
+    get:
+      tags: [Social]
+      operationId: listMyPlaylists
+      summary: The caller's playlists, private ones included
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of playlists
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Playlist"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ─────────────────────────── Social: notifications ───────────────────────────
+
+  /me/notifications:
+    get:
+      tags: [Social]
+      operationId: listNotifications
+      summary: The caller's notifications, newest first
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unread
+          in: query
+          description: '`"true"` narrows to unread notifications'
+          schema:
+            type: string
+            enum: ["true"]
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of notifications
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Notification"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/notifications/unread-count:
+    get:
+      tags: [Social]
+      operationId: unreadNotificationCount
+      summary: Unread notification count for badge rendering
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          unread_count:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/notifications/read-all:
+    post:
+      tags: [Social]
+      operationId: markAllNotificationsRead
+      summary: Mark every unread notification read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All marked read; `marked` counts how many
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                          marked:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/notifications/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Notification id
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Social]
+      operationId: markNotificationRead
+      summary: Mark one notification read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Discovery ───────────────────────────
+
+  /search:
+    get:
+      tags: [Discovery]
+      operationId: search
+      summary: Full-text video search
+      description: >-
+        Searches public, ready videos. Answers in the standard paginated
+        envelope like every other list endpoint.
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [relevance, newest, views, likes]
+            default: relevance
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: tags
+          in: query
+          description: Comma-separated tag list
+          schema:
+            type: string
+        - name: min_duration
+          in: query
+          description: Seconds; must be >= 0
+          schema:
+            type: integer
+            minimum: 0
+        - name: max_duration
+          in: query
+          description: Seconds; must be >= 0
+          schema:
+            type: integer
+            minimum: 0
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of search results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VideoSearchItem"
+        "400":
+          description: Missing `q`, unknown `sort`, or negative duration (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /search/suggest:
+    get:
+      tags: [Discovery]
+      operationId: searchSuggest
+      summary: Up to ten title suggestions for autocomplete
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Plain array of suggestion strings (not paginated)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /categories:
+    get:
+      tags: [Discovery]
+      operationId: listCategories
+      summary: Distinct categories in use, with video counts
+      security: []
+      responses:
+        "200":
+          description: Plain array of categories (not paginated)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CategoryCount"
+
+  /videos/trending:
+    get:
+      tags: [Discovery]
+      operationId: trending
+      summary: Most engaged-with public videos inside a time window
+      security: []
+      parameters:
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 24h
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Plain array of videos (not paginated)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VideoSearchItem"
+        "400":
+          description: Unknown `window` (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/related:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Discovery]
+      operationId: relatedVideos
+      summary: Videos similar by shared tags/category, topped up from trending
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Plain array of videos (not paginated)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VideoSearchItem"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/feed:
+    get:
+      tags: [Discovery]
+      operationId: getFeed
+      summary: Videos from creators the caller subscribes to, newest first
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of feed items
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VideoSearchItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ─────────────────────────── Moderation ───────────────────────────
+
+  /reports:
+    post:
+      tags: [Moderation]
+      operationId: createReport
+      summary: File a report against a video, user, or comment
+      description: >-
+        Any authenticated user may report. At least one of `video_id`,
+        `user_id`, `comment_id` is required. Filing the same report twice is a
+        409.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [report_type, reason]
+              properties:
+                report_type:
+                  $ref: "#/components/schemas/ReportType"
+                reason:
+                  type: string
+                description:
+                  type: string
+                video_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+                comment_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: The filed report
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ContentReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Same reporter, same target (`DUPLICATE_REPORT`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/reports/pending:
+    get:
+      tags: [Moderation]
+      operationId: listPendingReports
+      summary: Page of reports awaiting review
+      description: Requires the `moderate_content` permission.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Page of pending reports
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ContentReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/reports/{id}/review:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Report id
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Moderation]
+      operationId: reviewReport
+      summary: Resolve or dismiss a report
+      description: >-
+        Requires `moderate_content`. `action: ban_user` additionally requires
+        `manage_users` (checked in the handler) — without it the review is a
+        403.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [delete_video, ban_user, warn_user, dismiss]
+                notes:
+                  type: string
+      responses:
+        "200":
+          description: Report reviewed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                          report_id:
+                            type: string
+                            format: uuid
+                          action:
+                            type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing `moderate_content`, or `ban_user` without `manage_users` (`FORBIDDEN`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{id}/ban:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [Moderation]
+      operationId: banUser
+      summary: Ban a user
+      description: >-
+        Requires `manage_users`. Empty `duration` means permanent; a duration
+        is a positive Go duration string like `"72h"`. Banning yourself is
+        rejected.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                duration:
+                  type: string
+                  description: 'Positive Go duration string, e.g. "72h". Omit for a permanent ban.'
+      responses:
+        "200":
+          description: User banned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Self-ban or bad duration (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{id}/unban:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [Moderation]
+      operationId: unbanUser
+      summary: Lift a ban
+      description: Requires `manage_users`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User unbanned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────────────────── Admin ───────────────────────────
+
+  /admin/videos/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    post:
+      tags: [Admin]
+      operationId: retryVideo
+      summary: Re-queue a failed video for transcoding
+      description: >-
+        Requires `moderate_content`. Only a video in status `failed` may be
+        retried; any other status is a 400.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Retry initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Video is not in status `failed` (`BAD_REQUEST`) or bad id (`VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/videos/{id}/cache:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    delete:
+      tags: [Admin]
+      operationId: clearPlaylistCache
+      summary: Flush the cached HLS playlists for a video
+      description: Requires `moderate_content`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cache cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/queue/stats:
+    get:
+      tags: [Admin]
+      operationId: getQueueStats
+      summary: Asynq default-queue statistics
+      description: Requires `moderate_content`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Queue statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QueueStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/workers:
+    get:
+      tags: [Admin]
+      operationId: listActiveWorkers
+      summary: Active Asynq worker servers
+      description: Requires `moderate_content`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active workers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          workers:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/WorkerInfo"
+                          count:
+                            type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/analytics/dashboard:
+    get:
+      tags: [Admin]
+      operationId: getDashboard
+      summary: Platform-wide overview
+      description: Requires `view_analytics`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/analytics/realtime:
+    get:
+      tags: [Admin]
+      operationId: getRealtimeMetrics
+      summary: Live counters, always uncached
+      description: Requires `view_analytics`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Realtime metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RealtimeMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/analytics/top-videos:
+    get:
+      tags: [Admin]
+      operationId: getTopVideos
+      summary: Most-viewed videos of the past week
+      description: >-
+        Requires `view_analytics`. Unlike the shared pagination, `limit` here
+        defaults to 10, caps at 50, and **a malformed value is a 400 rather
+        than being defaulted**.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Plain array of video analytics (not paginated)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/VideoAnalytics"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/analytics/videos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Admin]
+      operationId: getVideoAnalytics
+      summary: Engagement breakdown for one video
+      description: Requires `view_analytics`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Video analytics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/VideoAnalytics"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/analytics/videos/{id}/views:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Admin]
+      operationId: getViewsTimeSeries
+      summary: View count time series for a video
+      description: Requires `view_analytics`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, week, month]
+            default: hour
+      responses:
+        "200":
+          description: Time series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TimeSeriesData"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/monitoring/metrics:
+    get:
+      tags: [Admin]
+      operationId: getAllMetrics
+      summary: All operational metrics in one payload
+      description: Requires `manage_users` (admin-only surface).
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Combined metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          system:
+                            $ref: "#/components/schemas/SystemMetrics"
+                          queue:
+                            $ref: "#/components/schemas/QueueMetrics"
+                          database:
+                            $ref: "#/components/schemas/DatabaseMetrics"
+                          redis:
+                            $ref: "#/components/schemas/RedisMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/monitoring/system:
+    get:
+      tags: [Admin]
+      operationId: getSystemMetrics
+      summary: Host CPU / memory / disk / goroutines
+      description: Requires `manage_users`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: System metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SystemMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/monitoring/queue:
+    get:
+      tags: [Admin]
+      operationId: getQueueMetrics
+      summary: Job queue metrics
+      description: Requires `manage_users`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Queue metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QueueMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/monitoring/database:
+    get:
+      tags: [Admin]
+      operationId: getDatabaseMetrics
+      summary: Postgres pool and table metrics
+      description: Requires `manage_users`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Database metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DatabaseMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/monitoring/redis:
+    get:
+      tags: [Admin]
+      operationId: getRedisMetrics
+      summary: Redis memory / keys / hit-rate metrics
+      description: Requires `manage_users`.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Redis metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RedisMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ─────────────────────────── Ops (server root, outside /api/v1) ───────────────────────────
+
+  /health:
+    servers:
+      - url: http://localhost:8080
+        description: Local development (server root — ops routes live outside /api/v1)
+      - url: "{scheme}://{host}"
+        description: Production (server root)
+        variables:
+          scheme:
+            default: https
+            enum: [https, http]
+          host:
+            default: api.example.com
+    get:
+      tags: [Ops]
+      operationId: health
+      summary: Readiness probe
+      description: >-
+        Mounted at the **server root**, not under `/api/v1`. Returns 503 when
+        Postgres or Redis is unreachable, so an orchestrator can pull the
+        instance out of rotation. Not wrapped in the JSON envelope.
+      security: []
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: A dependency is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /metrics:
+    servers:
+      - url: http://localhost:8080
+        description: Local development (server root — ops routes live outside /api/v1)
+      - url: "{scheme}://{host}"
+        description: Production (server root)
+        variables:
+          scheme:
+            default: https
+            enum: [https, http]
+          host:
+            default: api.example.com
+    get:
+      tags: [Ops]
+      operationId: prometheusMetrics
+      summary: Prometheus exposition
+      description: Mounted at the **server root**. Plain-text Prometheus format.
+      security: []
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /docs:
+    servers:
+      - url: http://localhost:8080
+        description: Local development (server root — ops routes live outside /api/v1)
+      - url: "{scheme}://{host}"
+        description: Production (server root)
+        variables:
+          scheme:
+            default: https
+            enum: [https, http]
+          host:
+            default: api.example.com
+    get:
+      tags: [Ops]
+      operationId: apiDocs
+      summary: This API reference, as a self-contained HTML page
+      description: >-
+        Mounted at the **server root**. The page embeds all of its CSS and JS —
+        no CDN assets — so it renders behind a strict CSP or with no egress.
+      security: []
+      responses:
+        "200":
+          description: The documentation page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /openapi.yaml:
+    servers:
+      - url: http://localhost:8080
+        description: Local development (server root — ops routes live outside /api/v1)
+      - url: "{scheme}://{host}"
+        description: Production (server root)
+        variables:
+          scheme:
+            default: https
+            enum: [https, http]
+          host:
+            default: api.example.com
+    get:
+      tags: [Ops]
+      operationId: openapiSpec
+      summary: This specification, raw
+      description: Mounted at the **server root**.
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+# ─────────────────────────── Components ───────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        `Authorization: Bearer <access_token>`. Obtain a token pair from
+        `/auth/login` or `/auth/register`; renew with `/auth/refresh`.
+        Access tokens live 900 s. A refresh token is not accepted here.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: 1-based page number; values below 1 are clamped to 1
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      description: Page size; clamped to at most 100
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    VideoId:
+      name: id
+      in: path
+      required: true
+      description: Video id
+      schema:
+        type: string
+        format: uuid
+    CommentId:
+      name: id
+      in: path
+      required: true
+      description: Comment id
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User id
+      schema:
+        type: string
+        format: uuid
+    PlaylistId:
+      name: id
+      in: path
+      required: true
+      description: Playlist id
+      schema:
+        type: string
+        format: uuid
+    Quality:
+      name: quality
+      in: path
+      required: true
+      description: Rendition quality
+      schema:
+        type: string
+        enum: [360p, 480p, 720p, 1080p]
+
+  responses:
+    ValidationError:
+      description: Malformed input (`VALIDATION_ERROR`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Invalid request
+    Unauthorized:
+      description: Missing, invalid, expired or revoked access token (`UNAUTHORIZED`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+    Forbidden:
+      description: Authenticated, but lacking the required permission (`FORBIDDEN`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: Insufficient permissions
+    NotFound:
+      description: >-
+        Resource not found (`NOT_FOUND`). Also the answer for a private video
+        or playlist read by anyone but its owner — never 403.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: Not found
+
+  schemas:
+    # ── Envelopes ──
+
+    SuccessEnvelope:
+      type: object
+      description: 'Every non-media, non-list success response: `{"success": true, "data": ...}`'
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          description: The payload; its shape is documented per endpoint
+
+    PaginatedEnvelope:
+      type: object
+      description: >-
+        Every list endpoint — including /search — wraps its page in this
+        envelope.
+      required: [success, data, pagination]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          type: array
+          items: {}
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      description: 'Every error: `{"success": false, "error": {"code", "message"}}`'
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: >-
+            Machine-readable error code. `AUTH_UNAVAILABLE` arrives with
+            status 503 when the token-revocation store is unreachable and the
+            server fails closed — retry with the same token rather than
+            discarding credentials as you would on a 401.
+          enum:
+            - VALIDATION_ERROR
+            - BAD_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - INTERNAL_ERROR
+            - ALREADY_EXISTS
+            - USER_BANNED
+            - DUPLICATE_REPORT
+            - EMAIL_ALREADY_VERIFIED
+            - INVALID_TOKEN
+            - INVALID_CURRENT_PASSWORD
+            - FILE_TOO_LARGE
+            - INVALID_FORMAT
+            - HLS_NOT_READY
+            - PLAYLIST_NOT_FOUND
+            - SEGMENT_NOT_FOUND
+            - VIDEO_NOT_READY
+            - FILE_NOT_FOUND
+            - ALREADY_IN_PLAYLIST
+            - AUTH_UNAVAILABLE
+        message:
+          type: string
+          description: Human-readable explanation
+
+    MessageResponse:
+      description: A success envelope whose payload is a short confirmation
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                message:
+                  type: string
+              additionalProperties: true
+
+    # ── Enums ──
+
+    Role:
+      type: string
+      enum: [guest, user, premium, moderator, admin]
+
+    VideoStatus:
+      type: string
+      enum: [uploading, processing, ready, failed]
+
+    VideoVisibility:
+      type: string
+      enum: [public, private, unlisted]
+      description: >-
+        `private` answers 404 to everyone but the owner; `unlisted` is
+        reachable by anyone with the link but excluded from listings and
+        search.
+
+    ReportType:
+      type: string
+      enum: [spam, harassment, hate_speech, violence, copyright, nudity, misinformation, other]
+
+    NotificationType:
+      type: string
+      enum: [new_video, comment, reply, like, subscriber, mention]
+
+    # ── Auth / account ──
+
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: "JWT; send as `Authorization: Bearer <access_token>`"
+        refresh_token:
+          type: string
+          description: Redeem at POST /auth/refresh; not usable as an API credential
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          description: Access-token lifetime in seconds (900)
+        refresh_expires_in:
+          type: integer
+          description: Refresh-token lifetime in seconds (604800)
+        user:
+          $ref: "#/components/schemas/User"
+
+    TokenPairResponse:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/TokenPair"
+
+    User:
+      type: object
+      description: >-
+        Password hashes, verification/reset tokens and moderation bookkeeping
+        are never serialized.
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        bio:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        email_verified:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+        oauth_provider:
+          type: string
+        oauth_avatar_url:
+          type: string
+        is_banned:
+          type: boolean
+        ban_reason:
+          type: string
+        ban_expiry:
+          type: string
+          format: date-time
+        banned_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserResponse:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/User"
+
+    # ── Videos ──
+
+    Video:
+      type: object
+      description: >-
+        Server-side storage keys (file path, HLS path, thumbnail path) are
+        deliberately withheld; play the video via the computed `hls_url` and
+        `thumbnail_url`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        filename:
+          type: string
+        file_size:
+          type: integer
+          format: int64
+        duration:
+          type: integer
+          description: Seconds
+        status:
+          $ref: "#/components/schemas/VideoStatus"
+        visibility:
+          $ref: "#/components/schemas/VideoVisibility"
+        mime_type:
+          type: string
+        original_resolution:
+          type: string
+        transcoding_progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        available_qualities:
+          type: array
+          items:
+            type: string
+          description: 'Subset of ["360p", "480p", "720p", "1080p"]'
+        hls_ready:
+          type: boolean
+        streaming_protocol:
+          type: string
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        language:
+          type: string
+        view_count:
+          type: integer
+          format: int64
+        like_count:
+          type: integer
+          format: int64
+        comment_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+        thumbnail_url:
+          type: string
+          description: >-
+            Computed; present once a thumbnail exists.
+            `/api/v1/videos/{id}/thumbnail`
+        hls_url:
+          type: string
+          description: >-
+            Computed; present once HLS is ready. Feed to hls.js / native HLS.
+            `/api/v1/videos/{id}/hls/master.m3u8`
+
+    VideoResponse:
+      allOf:
+        - $ref: "#/components/schemas/SuccessEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Video"
+
+    VideoStatusReport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/VideoStatus"
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        available_qualities:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+        thumbnail:
+          type: string
+          description: Server-side storage key; present only once a thumbnail is set
+
+    ViewResult:
+      type: object
+      properties:
+        counted:
+          type: boolean
+          description: true when the view was counted (201); false on a deduplicated repeat (200)
+
+    # ── Social ──
+
+    Like:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        is_like:
+          type: boolean
+          description: true = like, false = dislike
+        created_at:
+          type: string
+          format: date-time
+
+    Comment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        like_count:
+          type: integer
+          format: int64
+        reply_count:
+          type: integer
+          format: int64
+        pinned:
+          type: boolean
+        edited_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+        username:
+          type: string
+        avatar_url:
+          type: string
+
+    SubscriptionEntry:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        avatar_url:
+          type: string
+        subscriber_count:
+          type: integer
+          format: int64
+        notify_uploads:
+          type: boolean
+        subscribed_at:
+          type: string
+          format: date-time
+
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        visibility:
+          $ref: "#/components/schemas/VideoVisibility"
+        video_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PlaylistVideo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        playlist_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        added_at:
+          type: string
+          format: date-time
+
+    PlaylistItem:
+      type: object
+      properties:
+        position:
+          type: integer
+        added_at:
+          type: string
+          format: date-time
+        video:
+          $ref: "#/components/schemas/Video"
+
+    WatchLaterItem:
+      type: object
+      properties:
+        added_at:
+          type: string
+          format: date-time
+        video:
+          $ref: "#/components/schemas/Video"
+
+    WatchHistory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        watched_at:
+          type: string
+          format: date-time
+        watch_duration:
+          type: integer
+        completed:
+          type: boolean
+        last_position:
+          type: integer
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/NotificationType"
+        title:
+          type: string
+        message:
+          type: string
+        action_url:
+          type: string
+        actor_id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        comment_id:
+          type: string
+          format: uuid
+        read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Discovery ──
+
+    VideoSearchItem:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        thumbnail_url:
+          type: string
+        duration:
+          type: integer
+          description: Seconds
+        views:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        username:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        user_avatar_url:
+          type: string
+        user_verified:
+          type: boolean
+        relevance:
+          type: number
+        snippet:
+          type: string
+
+    CategoryCount:
+      type: object
+      properties:
+        category:
+          type: string
+        video_count:
+          type: integer
+          format: int64
+
+    # ── Moderation ──
+
+    ContentReport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        video_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        comment_id:
+          type: string
+          format: uuid
+        reporter_id:
+          type: string
+          format: uuid
+        report_type:
+          $ref: "#/components/schemas/ReportType"
+        reason:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, reviewing, resolved, dismissed]
+        reviewed_by:
+          type: string
+          format: uuid
+        reviewed_at:
+          type: string
+          format: date-time
+        action:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Admin ──
+
+    QueueStats:
+      type: object
+      properties:
+        active:
+          type: integer
+        pending:
+          type: integer
+        scheduled:
+          type: integer
+        retry:
+          type: integer
+        archived:
+          type: integer
+        completed:
+          type: integer
+        aggregating:
+          type: integer
+        processed:
+          type: integer
+        failed:
+          type: integer
+        paused:
+          type: boolean
+        size:
+          type: integer
+
+    WorkerInfo:
+      type: object
+      properties:
+        host:
+          type: string
+        pid:
+          type: integer
+        server_id:
+          type: string
+        concurrency:
+          type: integer
+        queues:
+          type: object
+          additionalProperties:
+            type: integer
+        started:
+          type: string
+          format: date-time
+        active_tasks:
+          type: integer
+
+    DashboardStats:
+      type: object
+      properties:
+        total_users:
+          type: integer
+          format: int64
+        new_users_today:
+          type: integer
+          format: int64
+        new_users_this_week:
+          type: integer
+          format: int64
+        active_users_24h:
+          type: integer
+          format: int64
+        total_videos:
+          type: integer
+          format: int64
+        videos_today:
+          type: integer
+          format: int64
+        videos_this_week:
+          type: integer
+          format: int64
+        processing_videos:
+          type: integer
+          format: int64
+        failed_videos:
+          type: integer
+          format: int64
+        total_views:
+          type: integer
+          format: int64
+        views_today:
+          type: integer
+          format: int64
+        views_this_week:
+          type: integer
+          format: int64
+        total_storage_bytes:
+          type: integer
+          format: int64
+        storage_used_gb:
+          type: number
+        queued_jobs:
+          type: integer
+          format: int64
+        active_workers:
+          type: integer
+          format: int64
+        premium_users:
+          type: integer
+          format: int64
+        monthly_revenue:
+          type: number
+        last_updated:
+          type: string
+          format: date-time
+
+    VideoAnalytics:
+      type: object
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        total_views:
+          type: integer
+          format: int64
+        unique_viewers:
+          type: integer
+          format: int64
+        likes:
+          type: integer
+          format: int64
+        dislikes:
+          type: integer
+          format: int64
+        comments:
+          type: integer
+          format: int64
+        shares:
+          type: integer
+          format: int64
+        total_watch_time:
+          type: integer
+          format: int64
+        avg_watch_time:
+          type: number
+        avg_watch_percent:
+          type: number
+        views_by_quality:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        avg_buffer_time:
+          type: number
+        playback_errors:
+          type: integer
+          format: int64
+        source_direct:
+          type: integer
+          format: int64
+        source_search:
+          type: integer
+          format: int64
+        source_embed:
+          type: integer
+          format: int64
+        source_social:
+          type: integer
+          format: int64
+        top_countries:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountryStats"
+        device_mobile:
+          type: integer
+          format: int64
+        device_desktop:
+          type: integer
+          format: int64
+        device_tablet:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        last_viewed:
+          type: string
+          format: date-time
+
+    CountryStats:
+      type: object
+      properties:
+        country:
+          type: string
+        views:
+          type: integer
+          format: int64
+
+    RealtimeMetrics:
+      type: object
+      properties:
+        active_viewers:
+          type: integer
+          format: int64
+        uploads_last_hour:
+          type: integer
+          format: int64
+        views_last_hour:
+          type: integer
+          format: int64
+        current_cpu:
+          type: number
+        current_memory:
+          type: number
+        queued_jobs:
+          type: integer
+          format: int64
+        processing_jobs:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+
+    TimeSeriesData:
+      type: object
+      properties:
+        label:
+          type: string
+        datapoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataPoint"
+
+    DataPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        value:
+          type: number
+
+    SystemMetrics:
+      type: object
+      properties:
+        cpu_percent:
+          type: number
+        memory_total:
+          type: integer
+          format: int64
+        memory_used:
+          type: integer
+          format: int64
+        memory_percent:
+          type: number
+        disk_total:
+          type: integer
+          format: int64
+        disk_used:
+          type: integer
+          format: int64
+        disk_percent:
+          type: number
+        goroutines:
+          type: integer
+        uptime:
+          type: integer
+          format: int64
+          description: Serialized as integer nanoseconds (Go time.Duration)
+        timestamp:
+          type: string
+          format: date-time
+
+    QueueMetrics:
+      type: object
+      properties:
+        pending_jobs:
+          type: integer
+          format: int64
+        active_jobs:
+          type: integer
+          format: int64
+        failed_jobs:
+          type: integer
+          format: int64
+        retry_queue:
+          type: integer
+          format: int64
+        archived_jobs:
+          type: integer
+          format: int64
+        processed_last:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+
+    DatabaseMetrics:
+      type: object
+      properties:
+        active_connections:
+          type: integer
+        idle_connections:
+          type: integer
+        max_connections:
+          type: integer
+        slow_queries:
+          type: integer
+          format: int64
+        total_queries:
+          type: integer
+          format: int64
+        table_sizes:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        timestamp:
+          type: string
+          format: date-time
+
+    RedisMetrics:
+      type: object
+      properties:
+        memory_used:
+          type: integer
+          format: int64
+        memory_peak:
+          type: integer
+          format: int64
+        total_keys:
+          type: integer
+          format: int64
+        hits:
+          type: integer
+          format: int64
+        misses:
+          type: integer
+          format: int64
+        hit_rate:
+          type: number
+        connected_clients:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    # ── Ops ──
+
+    HealthStatus:
+      type: object
+      description: Not wrapped in the JSON envelope
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        checks:
+          type: object
+          properties:
+            database:
+              type: boolean
+            redis:
+              type: boolean
+        uptime:
+          type: string
+          description: 'Go duration string, e.g. "1h2m3.4s"'
+        timestamp:
+          type: string
+          format: date-time

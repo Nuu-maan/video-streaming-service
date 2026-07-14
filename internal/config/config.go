@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -31,6 +32,11 @@ type ServerConfig struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
+	// TrustedProxies lists the IPs or CIDR ranges whose X-Forwarded-For is
+	// believed. Empty means trust nobody: gin's default is to trust every
+	// proxy, which lets any client pick its own ClientIP — and both the rate
+	// limiter and the view tracker key on that value.
+	TrustedProxies []string
 }
 
 // IsProduction reports whether the service is running in production.
@@ -98,6 +104,12 @@ type AuthConfig struct {
 	JWTIssuer       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	// RevocationFailOpen accepts tokens when the revocation store is down
+	// instead of rejecting authenticated requests with 503. Fail closed is the
+	// default: honouring revoked tokens during an outage is worse than the
+	// outage, because tokens get revoked precisely when they are presumed
+	// stolen.
+	RevocationFailOpen bool
 }
 
 // CORSConfig lists the origins permitted to make credentialed requests.
@@ -157,6 +169,25 @@ type WorkerConfig struct {
 	JobTimeout        time.Duration
 }
 
+// MailConfig configures outgoing transactional email. An empty SMTPHost is a
+// valid state, not an error: the mailer then writes messages to the log, so an
+// environment with no mail server still boots.
+type MailConfig struct {
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	// SMTPAllowInsecure permits cleartext delivery when the server offers no
+	// STARTTLS. Only for local relays such as MailHog; refused in production.
+	SMTPAllowInsecure bool
+	From              string
+	// FrontendBaseURL is the origin mailed links point at. The API is consumed
+	// cross-origin by separate frontend projects, so verification and reset
+	// links must open the frontend, never this server.
+	FrontendBaseURL  string
+	PasswordResetTTL time.Duration
+}
+
 type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
@@ -167,6 +198,7 @@ type Config struct {
 	MinIO     MinIOConfig
 	RateLimit RateLimitConfig
 	Worker    WorkerConfig
+	Mail      MailConfig
 	LogLevel  string
 }
 
@@ -186,6 +218,7 @@ func Load() (*Config, error) {
 			ReadTimeout:     getDurationEnv("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout:    getDurationEnv("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			ShutdownTimeout: getDurationEnv("SERVER_SHUTDOWN_TIMEOUT", 30*time.Second),
+			TrustedProxies:  getStringSliceEnv("SERVER_TRUSTED_PROXIES", nil),
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("DB_HOST", "localhost"),
@@ -216,10 +249,11 @@ func Load() (*Config, error) {
 			TranscodedPath: getEnv("STORAGE_TRANSCODED_PATH", "./web/uploads/transcoded"),
 		},
 		Auth: AuthConfig{
-			JWTSecret:       getEnv("JWT_SECRET", insecureDefaultJWTSecret),
-			JWTIssuer:       getEnv("JWT_ISSUER", "video-streaming-service"),
-			AccessTokenTTL:  getDurationEnv("JWT_ACCESS_TOKEN_TTL", 15*time.Minute),
-			RefreshTokenTTL: getDurationEnv("JWT_REFRESH_TOKEN_TTL", 7*24*time.Hour),
+			JWTSecret:          getEnv("JWT_SECRET", insecureDefaultJWTSecret),
+			JWTIssuer:          getEnv("JWT_ISSUER", "video-streaming-service"),
+			AccessTokenTTL:     getDurationEnv("JWT_ACCESS_TOKEN_TTL", 15*time.Minute),
+			RefreshTokenTTL:    getDurationEnv("JWT_REFRESH_TOKEN_TTL", 7*24*time.Hour),
+			RevocationFailOpen: getBoolEnv("AUTH_REVOCATION_FAIL_OPEN", false),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getStringSliceEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:8080"}),
@@ -227,7 +261,7 @@ func Load() (*Config, error) {
 				"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
 			}),
 			AllowedHeaders: getStringSliceEnv("CORS_ALLOWED_HEADERS", []string{
-				"Authorization", "Content-Type", "X-Request-ID",
+				"Authorization", "Content-Type", "X-Request-ID", "Range",
 			}),
 			MaxAge: getDurationEnv("CORS_MAX_AGE", 12*time.Hour),
 		},
@@ -247,6 +281,16 @@ func Load() (*Config, error) {
 		Worker: WorkerConfig{
 			MaxConcurrentJobs: getIntEnv("WORKER_MAX_CONCURRENT_JOBS", 4),
 			JobTimeout:        getDurationEnv("WORKER_JOB_TIMEOUT", 30*time.Minute),
+		},
+		Mail: MailConfig{
+			SMTPHost:          getEnv("SMTP_HOST", ""),
+			SMTPPort:          getIntEnv("SMTP_PORT", 587),
+			SMTPUsername:      getEnv("SMTP_USERNAME", ""),
+			SMTPPassword:      getEnv("SMTP_PASSWORD", ""),
+			SMTPAllowInsecure: getBoolEnv("SMTP_ALLOW_INSECURE", false),
+			From:              getEnv("MAIL_FROM", "no-reply@localhost"),
+			FrontendBaseURL:   getEnv("MAIL_FRONTEND_BASE_URL", "http://localhost:3000"),
+			PasswordResetTTL:  getDurationEnv("MAIL_PASSWORD_RESET_TTL", time.Hour),
 		},
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 	}
@@ -285,6 +329,19 @@ func (c *Config) Validate() error {
 	if c.MinIO.Enabled && (c.MinIO.AccessKeyID == "" || c.MinIO.SecretAccessKey == "") {
 		problems = append(problems, "MINIO_ACCESS_KEY and MINIO_SECRET_KEY are required when MINIO_ENABLED=true")
 	}
+	if c.Mail.PasswordResetTTL <= 0 {
+		problems = append(problems, "MAIL_PASSWORD_RESET_TTL must be positive")
+	}
+	// Validated here rather than left for gin.SetTrustedProxies to reject at
+	// route-registration time, where there is no way to refuse boot cleanly.
+	for _, proxy := range c.Server.TrustedProxies {
+		if net.ParseIP(proxy) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(proxy); err != nil {
+			problems = append(problems, fmt.Sprintf("SERVER_TRUSTED_PROXIES entry %q is neither an IP address nor a CIDR range", proxy))
+		}
+	}
 
 	if c.Server.IsProduction() {
 		if c.Auth.JWTSecret == insecureDefaultJWTSecret {
@@ -298,6 +355,13 @@ func (c *Config) Validate() error {
 		}
 		if c.Database.SSLMode == "disable" {
 			problems = append(problems, "DB_SSLMODE must not be 'disable' in production")
+		}
+		// Ports other than 465 negotiate STARTTLS, and the mailer refuses to
+		// proceed without it unless SMTP_ALLOW_INSECURE waives that — which
+		// would put credentials and password-reset links on the wire in
+		// cleartext, so the waiver is development-only.
+		if c.Mail.SMTPHost != "" && c.Mail.SMTPAllowInsecure {
+			problems = append(problems, "SMTP_ALLOW_INSECURE must not be enabled in production")
 		}
 	}
 

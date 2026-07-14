@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -155,7 +156,28 @@ func (h *VideoHandler) GetVideo(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !canViewVideo(c.Request.Context(), video) {
+		response.NotFound(c, "Video not found")
+		return
+	}
 	response.Success(c, http.StatusOK, video)
+}
+
+// canViewVideo reports whether the request behind ctx may read video. Only
+// private restricts anything — unlisted means "reachable by link" — and the
+// rule follows the role model: the owner, plus anyone granted watch_private.
+// Listings already exclude private videos; without this check on direct reads
+// and on streaming, "private" would be indistinguishable from "unlisted".
+// Callers respond with 404, never 403, so denial does not confirm existence.
+func canViewVideo(ctx context.Context, video *domain.Video) bool {
+	if video.Visibility != domain.VisibilityPrivate {
+		return true
+	}
+	principal, ok := appctx.PrincipalFrom(ctx)
+	if !ok {
+		return false
+	}
+	return video.IsOwnedBy(principal.UserID) || principal.HasPermission(domain.PermissionWatchPrivate)
 }
 
 // DeleteVideo removes a video. Only its owner, or a user holding
@@ -189,6 +211,8 @@ func (h *VideoHandler) DeleteVideo(c *gin.Context) {
 		return
 	}
 
+	h.uploadService.RemoveVideoFiles(ctx, video)
+
 	response.Success(c, http.StatusOK, gin.H{"message": "Video deleted"})
 }
 
@@ -196,6 +220,10 @@ func (h *VideoHandler) DeleteVideo(c *gin.Context) {
 func (h *VideoHandler) GetVideoStatus(c *gin.Context) {
 	video, ok := h.loadVideo(c)
 	if !ok {
+		return
+	}
+	if !canViewVideo(c.Request.Context(), video) {
+		response.NotFound(c, "Video not found")
 		return
 	}
 

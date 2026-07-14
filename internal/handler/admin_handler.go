@@ -21,13 +21,16 @@ type AdminHandler struct {
 	log         *logger.Logger
 }
 
+// NewAdminHandler borrows the inspector rather than constructing one: the
+// caller's inspector carries the full Redis credentials (password, DB) and is
+// closed with the app, where one built here from a bare address would fail
+// against an authenticated Redis and leak its connection.
 func NewAdminHandler(
 	videoRepo repository.VideoRepository,
 	queueClient *queue.QueueClient,
-	redisAddr string,
+	inspector *asynq.Inspector,
 	log *logger.Logger,
 ) *AdminHandler {
-	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: redisAddr})
 	return &AdminHandler{
 		videoRepo:   videoRepo,
 		queueClient: queueClient,

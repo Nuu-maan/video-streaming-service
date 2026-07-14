@@ -22,3 +22,7 @@ tmp/
 web/uploads/**
 !web/uploads/**/
 !web/uploads/**/.gitkeep
+
+# Tool archives downloaded for local development (ffmpeg.zip, redis.zip);
+# also excluded from the Docker build context by .dockerignore.
+*.zip

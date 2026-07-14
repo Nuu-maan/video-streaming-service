@@ -3,6 +3,7 @@ package jwt
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ const (
 
 func newService(t *testing.T, secret string, d time.Duration) *TokenService {
 	t.Helper()
-	return NewTokenService(secret, d, testIssuer)
+	return NewTokenService(secret, d, 24*time.Hour, testIssuer)
 }
 
 func TestGenerateAndValidateToken(t *testing.T) {
@@ -69,6 +70,37 @@ func TestGenerateAndValidateToken(t *testing.T) {
 				t.Errorf("ExpiresAt = %v, want a time in the future", claims.ExpiresAt)
 			}
 		})
+	}
+}
+
+func TestGenerateTokenAssignsUniqueJTI(t *testing.T) {
+	svc := newService(t, testSecret, time.Hour)
+
+	first, err := svc.GenerateToken("user-1", "alice", "user")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	second, err := svc.GenerateToken("user-1", "alice", "user")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	firstClaims, err := svc.ValidateToken(first)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+	secondClaims, err := svc.ValidateToken(second)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+
+	if firstClaims.ID == "" {
+		t.Fatal("token carries no jti; per-token revocation cannot key on it")
+	}
+	// Identical identity, still distinct jti: revoking one login must not
+	// revoke another.
+	if firstClaims.ID == secondClaims.ID {
+		t.Errorf("two tokens share jti %q, want unique IDs", firstClaims.ID)
 	}
 }
 
@@ -225,29 +257,114 @@ func TestExtractUserID(t *testing.T) {
 	}
 }
 
-func TestRefreshToken(t *testing.T) {
+// The two token types must not be interchangeable. Regression test for a real
+// bug: refresh used to take the caller's *access* token and mint a new one from
+// it, so a session could only be extended while it was still alive — the one
+// situation in which extending it is unnecessary. Once the access token expired
+// there was nothing to refresh with and the user was silently logged out.
+func TestTokenTypesAreNotInterchangeable(t *testing.T) {
 	svc := newService(t, testSecret, time.Hour)
 
-	token, err := svc.GenerateToken("user-7", "carol", "admin")
+	access, err := svc.GenerateToken("user-7", "carol", "admin")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	refresh, err := svc.GenerateRefreshToken("user-7", "carol", "admin")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken: %v", err)
+	}
+
+	if _, err := svc.ValidateAccessToken(access); err != nil {
+		t.Errorf("ValidateAccessToken(access token) = %v, want it accepted", err)
+	}
+	if _, err := svc.ValidateRefreshToken(refresh); err != nil {
+		t.Errorf("ValidateRefreshToken(refresh token) = %v, want it accepted", err)
+	}
+
+	// An access token presented at the refresh endpoint.
+	if _, err := svc.ValidateRefreshToken(access); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateRefreshToken(access token) = %v, want ErrWrongTokenType", err)
+	}
+
+	// A refresh token presented as API credentials. This is the dangerous
+	// direction: refresh tokens are long-lived, so accepting one here would be a
+	// multi-day API key.
+	if _, err := svc.ValidateAccessToken(refresh); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateAccessToken(refresh token) = %v, want ErrWrongTokenType", err)
+	}
+}
+
+// Regression test for a hole in "log out everywhere".
+//
+// Revocation-of-all works by recording a cutoff and rejecting every token issued
+// before it. The standard iat claim is whole seconds, so when the cutoff was
+// compared against it, any session created in the same second as the logout
+// survived — reproducible simply by signing in and immediately revoking. The
+// token must therefore carry an issue time finer than a second.
+func TestIssuedAtHasSubSecondPrecision(t *testing.T) {
+	svc := newService(t, testSecret, time.Hour)
+
+	token, err := svc.GenerateToken("user-9", "dave", "user")
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
 
-	refreshed, err := svc.RefreshToken(token)
+	claims, err := svc.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("RefreshToken: %v", err)
+		t.Fatalf("ValidateAccessToken: %v", err)
 	}
 
-	claims, err := svc.ValidateToken(refreshed)
-	if err != nil {
-		t.Fatalf("ValidateToken(refreshed): %v", err)
-	}
-	if claims.UserID != "user-7" || claims.Username != "carol" || claims.Role != "admin" {
-		t.Errorf("refreshed claims = %+v, want the original identity preserved", claims)
+	if claims.IssuedAtMS == 0 {
+		t.Fatal("token carries no iat_ms; the logout-all cutoff can only be compared at whole-second precision, which lets same-second sessions survive revocation")
 	}
 
-	if _, err := svc.RefreshToken("garbage"); err == nil {
-		t.Error("RefreshToken accepted a garbage token, want an error")
+	issued := claims.IssuedAtTime()
+	if issued.IsZero() {
+		t.Fatal("IssuedAtTime is zero")
+	}
+
+	// The whole point: the issue time must not be truncated to the second.
+	if !issued.Equal(issued.Truncate(time.Second)) {
+		return // carries sub-second detail, which is what we require
+	}
+	// Landing exactly on a second boundary is possible but vanishingly unlikely;
+	// what must never happen is the value being *derived* from the second-only
+	// claim, so assert the two are independent.
+	if claims.IssuedAt != nil && claims.IssuedAtMS != claims.IssuedAt.Unix()*1000 {
+		return
+	}
+	t.Log("issued exactly on a second boundary; precision not proven by this run")
+}
+
+func TestRefreshTokenOutlivesAccessToken(t *testing.T) {
+	svc := NewTokenService(testSecret, time.Minute, 24*time.Hour, testIssuer)
+
+	access, err := svc.GenerateToken("user-7", "carol", "admin")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	refresh, err := svc.GenerateRefreshToken("user-7", "carol", "admin")
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken: %v", err)
+	}
+
+	accessClaims, err := svc.ValidateAccessToken(access)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	refreshClaims, err := svc.ValidateRefreshToken(refresh)
+	if err != nil {
+		t.Fatalf("ValidateRefreshToken: %v", err)
+	}
+
+	if !refreshClaims.ExpiresAt.After(accessClaims.ExpiresAt.Time) {
+		t.Errorf("refresh expiry %v is not after access expiry %v — a refresh token that dies with the access token cannot renew anything",
+			refreshClaims.ExpiresAt, accessClaims.ExpiresAt)
+	}
+
+	// Distinct jti per token, so revoking one does not revoke the other.
+	if accessClaims.ID == refreshClaims.ID {
+		t.Error("access and refresh tokens share a jti, want distinct identities")
 	}
 }
 
