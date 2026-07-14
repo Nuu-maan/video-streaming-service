@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -37,7 +38,15 @@ type loginRequest struct {
 }
 
 type refreshRequest struct {
-	Token string `json:"token" binding:"required"`
+	// The field is named for the token it takes, and matches the name login
+	// returns it under, so a client can hand back exactly what it was given.
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+type logoutRequest struct {
+	// RefreshToken is optional: only clients that also hold a refresh token
+	// send one so it can be revoked alongside the access token.
+	RefreshToken string `json:"refresh_token"`
 }
 
 // Register creates an account and returns a token for it.
@@ -81,21 +90,87 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	response.Success(c, http.StatusOK, tokens)
 }
 
-// Refresh exchanges a valid token for a fresh one.
+// Refresh exchanges a refresh token for a new access token, so a session
+// outlives the access token's few minutes without the user signing in again.
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req refreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ValidationError(c, "token is required")
+		response.ValidationError(c, "refresh_token is required")
 		return
 	}
 
-	tokens, err := h.auth.Refresh(c.Request.Context(), req.Token)
+	tokens, err := h.auth.Refresh(c.Request.Context(), req.RefreshToken)
 	if err != nil {
 		h.respondAuthError(c, err)
 		return
 	}
 
 	response.Success(c, http.StatusOK, tokens)
+}
+
+// Logout revokes the presented access token, and the refresh token too when
+// the body carries one. The token stays cryptographically valid until expiry —
+// revocation happens in the denylist the auth middleware consults, not in the
+// token itself — so this is what actually ends the session server-side.
+func (h *AuthHandler) Logout(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	if _, ok := appctx.PrincipalFrom(ctx); !ok {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	token := bearerToken(c)
+	if token == "" {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	// The body is optional; a bare POST logs out the access token alone.
+	var req logoutRequest
+	_ = c.ShouldBindJSON(&req)
+
+	if err := h.auth.Logout(ctx, token, strings.TrimSpace(req.RefreshToken)); err != nil {
+		if errors.Is(err, domain.ErrInvalidToken) {
+			response.Unauthorized(c, "Invalid or expired token")
+			return
+		}
+		h.log.Error(ctx, "failed to log out", err, nil)
+		response.InternalError(c, "Failed to log out")
+		return
+	}
+
+	response.Success(c, http.StatusOK, gin.H{"message": "Logged out"})
+}
+
+// LogoutAll revokes every outstanding session the caller has, on every device.
+func (h *AuthHandler) LogoutAll(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	principal, ok := appctx.PrincipalFrom(ctx)
+	if !ok {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+
+	if err := h.auth.RevokeAllSessions(ctx, principal.UserID); err != nil {
+		h.log.Error(ctx, "failed to revoke all sessions", err, nil)
+		response.InternalError(c, "Failed to log out")
+		return
+	}
+
+	response.Success(c, http.StatusOK, gin.H{"message": "All sessions revoked"})
+}
+
+// bearerToken returns the raw token from the Authorization header, or "" when
+// the header is absent or not a bearer credential.
+func bearerToken(c *gin.Context) string {
+	const prefix = "Bearer "
+	header := c.GetHeader("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
 }
 
 // Me returns the authenticated caller's own account.
@@ -134,7 +209,12 @@ func (h *AuthHandler) respondAuthError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidCredentials), errors.Is(err, domain.ErrUserNotFound):
 		response.Unauthorized(c, "Invalid credentials")
-	case errors.Is(err, domain.ErrInvalidToken), errors.Is(err, domain.ErrTokenExpired):
+	case errors.Is(err, domain.ErrInvalidToken),
+		errors.Is(err, domain.ErrTokenExpired),
+		// A token revoked by logout is a rejected credential, not a server fault:
+		// without this it fell through to the 500 default, so signing out and then
+		// refreshing reported an internal error instead of "sign in again".
+		errors.Is(err, domain.ErrTokenRevoked):
 		response.Unauthorized(c, "Invalid or expired token")
 	case errors.Is(err, domain.ErrUserBanned):
 		response.Error(c, http.StatusForbidden, "USER_BANNED", "This account is banned")
