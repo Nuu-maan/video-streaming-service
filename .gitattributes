@@ -1,0 +1,4 @@
+# gofmt insists on LF, and CI checks gofmt. Pin Go sources to LF so a Windows
+# checkout with core.autocrlf=true does not materialize every .go file with
+# CRLF and turn `gofmt -l` into a wall of false positives.
+*.go text eol=lf
