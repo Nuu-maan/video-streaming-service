@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,15 +57,77 @@ type Video struct {
 	Visibility          VideoVisibility `json:"visibility"`
 	MimeType            string          `json:"mime_type"`
 	OriginalResolution  string          `json:"original_resolution,omitempty"`
-	ThumbnailPath       *string         `json:"thumbnail_path,omitempty"`
 	TranscodingProgress int             `json:"transcoding_progress"`
 	AvailableQualities  []string        `json:"available_qualities"`
-	HLSMasterPath       *string         `json:"hls_master_path,omitempty"`
 	HLSReady            bool            `json:"hls_ready"`
 	StreamingProtocol   string          `json:"streaming_protocol,omitempty"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
-	ProcessedAt         *time.Time      `json:"processed_at,omitempty"`
+
+	// ThumbnailPath and HLSMasterPath are storage keys, not URLs, and are
+	// withheld from the API for the same reason as FilePath: they describe where
+	// the bytes live on the server, which is nobody's business and is not
+	// fetchable anyway. Clients get thumbnail_url and hls_url instead — see
+	// MarshalJSON — which are real, access-controlled endpoints.
+	ThumbnailPath *string `json:"-"`
+	HLSMasterPath *string `json:"-"`
+
+	// Discovery metadata. Search filters on these, so they are part of the
+	// contract even though the upload endpoint leaves them empty by default.
+	Category string   `json:"category,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	Language string   `json:"language,omitempty"`
+
+	// Engagement counters. Postgres triggers maintain LikeCount and
+	// CommentCount; ViewCount is incremented by the view tracker, which has no
+	// trigger behind it. They are denormalised onto videos so a listing does not
+	// need one aggregate query per row.
+	ViewCount    int64 `json:"view_count"`
+	LikeCount    int64 `json:"like_count"`
+	CommentCount int64 `json:"comment_count"`
+
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+}
+
+// videoJSON strips the MarshalJSON method so the marshaller below can embed the
+// struct without recursing into itself.
+type videoJSON Video
+
+// MarshalJSON emits the playable URLs alongside the video.
+//
+// They are derived from the ID rather than stored, because a stored URL is a
+// URL that goes stale: hls_master_path used to be persisted at transcode time
+// and pointed at a directory the worker had never written to, so every API
+// response advertised a link that 404'd. A client should be told where to fetch
+// the video from, and that answer is a function of the route table, not of a
+// column written months ago.
+func (v Video) MarshalJSON() ([]byte, error) {
+	out := struct {
+		videoJSON
+		ThumbnailURL string `json:"thumbnail_url,omitempty"`
+		HLSURL       string `json:"hls_url,omitempty"`
+	}{videoJSON: videoJSON(v)}
+
+	if v.ThumbnailPath != nil && *v.ThumbnailPath != "" {
+		out.ThumbnailURL = VideoThumbnailURL(v.ID)
+	}
+	if v.HLSReady {
+		out.HLSURL = VideoHLSURL(v.ID)
+	}
+
+	return json.Marshal(out)
+}
+
+// VideoThumbnailURL and VideoHLSURL are the canonical client-facing URLs for a
+// video's assets. They live here, next to the type they describe, so every
+// projection of a video (the full record, a search hit, a playlist entry) agrees
+// on one answer.
+func VideoThumbnailURL(id uuid.UUID) string {
+	return "/api/v1/videos/" + id.String() + "/thumbnail"
+}
+
+func VideoHLSURL(id uuid.UUID) string {
+	return "/api/v1/videos/" + id.String() + "/hls/master.m3u8"
 }
 
 // IsOwnedBy reports whether userID owns this video. An unowned (legacy) video

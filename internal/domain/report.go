@@ -46,21 +46,25 @@ func (rs ReportStatus) IsValid() bool {
 	return false
 }
 
+// ContentReport is returned by the reporting and moderation endpoints, so its
+// fields carry explicit snake_case tags: without them encoding/json emits the Go
+// field names and this one type answers in PascalCase while the rest of the API
+// answers in snake_case.
 type ContentReport struct {
-	ID          uuid.UUID
-	VideoID     *uuid.UUID
-	UserID      *uuid.UUID
-	CommentID   *uuid.UUID
-	ReporterID  uuid.UUID
-	ReportType  ReportType
-	Reason      string
-	Description string
-	Status      ReportStatus
-	ReviewedBy  *uuid.UUID
-	ReviewedAt  *time.Time
-	Action      *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uuid.UUID    `json:"id"`
+	VideoID     *uuid.UUID   `json:"video_id,omitempty"`
+	UserID      *uuid.UUID   `json:"user_id,omitempty"`
+	CommentID   *uuid.UUID   `json:"comment_id,omitempty"`
+	ReporterID  uuid.UUID    `json:"reporter_id"`
+	ReportType  ReportType   `json:"report_type"`
+	Reason      string       `json:"reason"`
+	Description string       `json:"description,omitempty"`
+	Status      ReportStatus `json:"status"`
+	ReviewedBy  *uuid.UUID   `json:"reviewed_by,omitempty"`
+	ReviewedAt  *time.Time   `json:"reviewed_at,omitempty"`
+	Action      *string      `json:"action,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 func NewContentReport(reporterID uuid.UUID, reportType ReportType, reason, description string) (*ContentReport, error) {
