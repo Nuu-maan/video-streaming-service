@@ -1,0 +1,384 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * `hover-ok:` — a hover state that only exists where hovering does.
+ *
+ * A touch device fires :hover on tap and then *keeps* it until the user taps
+ * somewhere else, so an ungated `group-hover:scale-105` on a card leaves the
+ * card visibly stuck mid-lift on the way to a navigation the user already
+ * committed to. Gate every hover that MOVES something behind this. Colour and
+ * background hovers can stay ungated — they are harmless when they stick.
+ */
+@custom-variant hover-ok (@media (hover: hover) and (pointer: fine));
+
+/*
+ * Design tokens for Reel.
+ *
+ * Every value here is OKLCH, gamut-checked against sRGB, and contrast-verified
+ * (WCAG 2 AA). Dark is the product's default theme — video is watched in the
+ * dark — and the light theme is derived from the same ramps by reversing the
+ * lightness mapping, so both read as one system.
+ *
+ * Accent: a signal red at H=25 ("Reel" — record light, cinema). The full ramp
+ * keeps a constant hue (zero drift) and a constant chroma *percentage* (82% of
+ * the per-step sRGB maximum), so every step is in gamut and equally vivid.
+ * Neutrals carry a whisper of the complementary cool hue (H=260, C <= 0.018)
+ * for a cinematic chrome that never reads as tinted.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Static tokens: brand ramp, type scale, easings.
+ * `static` so every variable is emitted even before a utility uses it —
+ * agents also read these from inline styles and Motion transitions.
+ * ------------------------------------------------------------------------- */
+@theme static {
+  /*
+   * Brand ramp — H 25, C = 82% of max chroma per lightness step.
+   *
+   * ⚠️ THE RAMP IS NOT THEME-AGNOSTIC. Each step is legible against exactly one
+   * of the two backgrounds, and using one unscoped is how you ship 2.5:1 text.
+   * Measured (WCAG 2) against --background in each theme:
+   *
+   *              light bg   dark bg
+   *   brand-300    1.82:1   10.46:1   ← dark-theme text only
+   *   brand-400    2.56:1    7.41:1   ← dark-theme text only
+   *   brand-500    3.76:1    5.05:1   ← icons/UI in light (>=3:1); text in dark
+   *   brand-600    5.07:1    3.74:1
+   *   brand-700    6.91:1    2.75:1   ← light-theme text only
+   *   brand-800    9.76:1    1.95:1   ← light-theme text only
+   *
+   * So brand text is always a SCOPED PAIR, never a bare token:
+   *   resting  text-brand-700 dark:text-brand-400          (6.9:1 / 7.4:1)
+   *   hover    hover:text-brand-800 dark:hover:text-brand-300
+   *            — darker in light, lighter in dark; both directions gain contrast.
+   * A bare `text-brand-500` is fine for an ICON (3:1 floor) and never for text.
+   */
+  --color-brand-50: oklch(0.975 0.01 25);
+  --color-brand-100: oklch(0.94 0.025 25);
+  --color-brand-200: oklch(0.885 0.05 25);
+  --color-brand-300: oklch(0.81 0.088 25);
+  --color-brand-400: oklch(0.72 0.143 25);
+  --color-brand-500: oklch(0.63 0.209 25);
+  --color-brand-600: oklch(0.555 0.185 25);
+  --color-brand-700: oklch(0.48 0.16 25);
+  --color-brand-800: oklch(0.395 0.131 25);
+  --color-brand-900: oklch(0.31 0.103 25);
+  --color-brand-950: oklch(0.235 0.078 25);
+
+  /*
+   * Fluid type scale for headings. Body copy stays on Tailwind's default
+   * scale (text-sm for UI, text-base for prose); these are the display roles:
+   *   text-display — hero/landing statements
+   *   text-title   — the page <h1> (page-header.tsx uses it)
+   *   text-heading — section headings, card titles
+   * Line-heights tighten and tracking goes negative as size grows.
+   */
+  --text-display: clamp(2.25rem, 1.6rem + 2.6vw, 3.5rem);
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 650;
+  --text-title: clamp(1.5rem, 1.25rem + 1vw, 2rem);
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.015em;
+  --text-title--font-weight: 600;
+  --text-heading: clamp(1.125rem, 1.05rem + 0.35vw, 1.375rem);
+  --text-heading--line-height: 1.3;
+  --text-heading--letter-spacing: -0.01em;
+  --text-heading--font-weight: 600;
+
+  /*
+   * Easings. The built-in CSS keywords are too weak — these are the house
+   * curves. Usage: `ease-out-quart` on enters, `ease-in-out-quart` for
+   * on-screen movement, `ease-drawer` for sheets/drawers, `ease-swap` for
+   * icon cross-fades. Never `ease-in` on UI.
+   */
+  --ease-out-quart: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-quart: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-swap: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ---------------------------------------------------------------------------
+ * Semantic tokens (theme-dependent, defined per theme below).
+ * ------------------------------------------------------------------------- */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  /* shadow-border / shadow-border-hover: layered shadow that acts as a 1px
+     ring + lift. Use on cards and elevated surfaces instead of `border`.
+     shadow-border-overlay is the same idea one storey up — for surfaces that
+     float ABOVE the page (popovers, suggestion panels, sheets). Reaching for a
+     stock `shadow-md`/`shadow-lg` instead is what puts three different elevation
+     systems on one screen: those are single-layer drops, and next to a layered
+     token they read as the flat 2013 shadow they are. */
+  --shadow-border: var(--surface-shadow);
+  --shadow-border-hover: var(--surface-shadow-hover);
+  --shadow-border-overlay: var(--surface-shadow-overlay);
+}
+
+/* ---------------------------------------------------------------------------
+ * Light theme.
+ * Verified contrast (WCAG 2): foreground/background 18.6:1,
+ * muted-foreground/background 5.8:1, muted-foreground/muted 5.3:1,
+ * primary-foreground/primary 5.6:1, destructive-as-text/background 5.2:1,
+ * ring/background 3.7:1 (UI >= 3:1).
+ * ------------------------------------------------------------------------- */
+:root {
+  --background: oklch(0.99 0.002 260);
+  --foreground: oklch(0.17 0.01 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.01 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.01 260);
+  --primary: oklch(0.53 0.18 25);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0.005 260);
+  --secondary-foreground: oklch(0.17 0.01 260);
+  --muted: oklch(0.955 0.005 260);
+  --muted-foreground: oklch(0.5 0.018 260);
+  --accent: oklch(0.955 0.005 260);
+  --accent-foreground: oklch(0.17 0.01 260);
+  --destructive: oklch(0.55 0.19 25);
+  --border: oklch(0.905 0.008 260);
+  --input: oklch(0.905 0.008 260);
+  --ring: oklch(0.63 0.209 25);
+  --chart-1: oklch(0.55 0.145 25);
+  --chart-2: oklch(0.55 0.146 260);
+  --chart-3: oklch(0.55 0.112 145);
+  --chart-4: oklch(0.55 0.073 85);
+  --chart-5: oklch(0.55 0.176 315);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0.003 260);
+  --sidebar-foreground: oklch(0.17 0.01 260);
+  --sidebar-primary: oklch(0.53 0.18 25);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.955 0.005 260);
+  --sidebar-accent-foreground: oklch(0.17 0.01 260);
+  --sidebar-border: oklch(0.905 0.008 260);
+  --sidebar-ring: oklch(0.63 0.209 25);
+
+  /* Layered "border" shadow — 1px ring + lift + ambient (surfaces.md). */
+  --surface-shadow:
+    0px 0px 0px 1px oklch(0 0 0 / 0.06),
+    0px 1px 2px -1px oklch(0 0 0 / 0.06),
+    0px 2px 4px 0px oklch(0 0 0 / 0.04);
+  --surface-shadow-hover:
+    0px 0px 0px 1px oklch(0 0 0 / 0.08),
+    0px 1px 2px -1px oklch(0 0 0 / 0.08),
+    0px 2px 4px 0px oklch(0 0 0 / 0.06);
+  /* One storey up: floats above the page, so it casts further. */
+  --surface-shadow-overlay:
+    0px 0px 0px 1px oklch(0 0 0 / 0.08),
+    0px 4px 8px -2px oklch(0 0 0 / 0.1),
+    0px 12px 24px -6px oklch(0 0 0 / 0.1);
+
+  /*
+   * Motion tokens. Every agent uses these instead of inventing timings.
+   *   --motion-fast    state changes: hover, press, toggle      (120ms)
+   *   --motion-medium  enters: dropdowns, popovers, list items  (200ms)
+   *   --motion-slow    large surfaces: sheets, dialogs          (300ms)
+   *   --motion-exit    exits — always faster than enters        (150ms)
+   * Tailwind usage: `duration-(--motion-fast)`, or in Motion (motion/react):
+   * springs with { type: "spring", duration: 0.3, bounce: 0 } — bounce only
+   * (~0.2) when the gesture itself carried momentum (a flick, a drag release).
+   */
+  --motion-fast: 120ms;
+  --motion-medium: 200ms;
+  --motion-slow: 300ms;
+  --motion-exit: 150ms;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark theme (the default — see ThemeProvider).
+ * Verified contrast (WCAG 2): foreground/background 17.7:1, foreground/card
+ * 16.5:1, muted-foreground/background 8.2:1, muted-foreground/muted 6.5:1,
+ * primary-foreground/primary 4.5:1, destructive-as-text/background 4.9:1,
+ * brand-400 links/background 7.4:1, ring/background 5.1:1 (UI >= 3:1).
+ * ------------------------------------------------------------------------- */
+.dark {
+  --background: oklch(0.155 0.008 260);
+  --foreground: oklch(0.965 0.005 260);
+  --card: oklch(0.195 0.009 260);
+  --card-foreground: oklch(0.965 0.005 260);
+  --popover: oklch(0.195 0.009 260);
+  --popover-foreground: oklch(0.965 0.005 260);
+  --primary: oklch(0.58 0.19 25);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.26 0.01 260);
+  --secondary-foreground: oklch(0.965 0.005 260);
+  --muted: oklch(0.26 0.01 260);
+  --muted-foreground: oklch(0.73 0.015 260);
+  --accent: oklch(0.26 0.01 260);
+  --accent-foreground: oklch(0.965 0.005 260);
+  --destructive: oklch(0.62 0.185 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.63 0.209 25);
+  --chart-1: oklch(0.68 0.135 25);
+  --chart-2: oklch(0.68 0.11 260);
+  --chart-3: oklch(0.68 0.139 145);
+  --chart-4: oklch(0.68 0.091 85);
+  --chart-5: oklch(0.68 0.163 315);
+  --sidebar: oklch(0.155 0.008 260);
+  --sidebar-foreground: oklch(0.965 0.005 260);
+  --sidebar-primary: oklch(0.58 0.19 25);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.26 0.01 260);
+  --sidebar-accent-foreground: oklch(0.965 0.005 260);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.63 0.209 25);
+
+  /* Dark mode: layered depth is invisible — a single white ring instead. */
+  --surface-shadow: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --surface-shadow-hover: 0 0 0 1px oklch(1 0 0 / 0.13);
+  /* An overlay is the exception: it floats over content rather than sitting in
+     it, so the ring gets a soft dark ambient underneath to lift it off. */
+  --surface-shadow-overlay:
+    0 0 0 1px oklch(1 0 0 / 0.12),
+    0 8px 24px -6px oklch(0 0 0 / 0.55);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    /* A missing font weight must fail visibly, never render as a faked bold. */
+    font-synthesis: none;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* Brand-tinted selection, kept legible in both themes. */
+  ::selection {
+    background: oklch(0.63 0.209 25 / 0.3);
+  }
+  /* Images: subtle neutral outline for consistent depth; pure black/white
+     only — a tinted outline reads as dirt on the image edge. */
+  img,
+  video {
+    outline: 1px solid oklch(0 0 0 / 0.1);
+    outline-offset: -1px;
+  }
+  .dark img,
+  .dark video {
+    outline-color: oklch(1 0 0 / 0.1);
+  }
+}
+
+/*
+ * Horizontal shelves (the trending rail, the category chip row) are real
+ * scroll surfaces — trackpad, touch and shift+wheel all work — but a
+ * permanently visible scrollbar under a row of cards reads as a mistake.
+ * Hide the bar, keep the scrolling. Never apply this to a vertical scroller:
+ * there, the bar is the only affordance telling the user there is more.
+ */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/*
+ * Anything that ticks — durations, view counts, timers — needs tabular
+ * figures or the layout jitters as digits change. Tailwind's built-in
+ * `tabular-nums` utility is the canonical way; this element rule catches
+ * <time> without a class.
+ */
+time {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Reduced motion: gentler, not dead. Transitions collapse to near-instant so
+ * state changes still register; scroll snapping stays put.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * …but a spinner is not decoration, and the blanket rule above would freeze
+   * every one of them into a static glyph: the buffering spinner over a stalled
+   * stream, the pending spinner in every submit button, the transcoding badge,
+   * every skeleton. Those loops ARE the message — they are the only channel
+   * telling someone the system is still working.
+   *
+   * Reduced motion means fewer and gentler animations, not zero: what we soften
+   * is the rotation, not the indicator's existence. So the loops come back —
+   * the spin slower than default (1.5s, not 1s), and the skeleton pulse left as
+   * Tailwind wrote it, which is opacity-only and therefore exactly the kind of
+   * loop that is safe here. Neither moves a pixel of layout.
+   */
+  .animate-spin {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .animate-pulse {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/*
+ * Translucent chrome (the sticky header carries data-translucent) goes
+ * frosty-solid when the user asks for reduced transparency.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  [data-translucent] {
+    background-color: var(--background) !important;
+    backdrop-filter: none !important;
+  }
+}

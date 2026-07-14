@@ -2941,6 +2941,13 @@ components:
 
     PaginationMeta:
       type: object
+      required:
+        - total
+        - page
+        - limit
+        - total_pages
+        - has_next
+        - has_previous
       properties:
         total:
           type: integer
@@ -3046,6 +3053,13 @@ components:
 
     TokenPair:
       type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+        - refresh_expires_in
+        - user
       properties:
         access_token:
           type: string
@@ -3078,6 +3092,15 @@ components:
       description: >-
         Password hashes, verification/reset tokens and moderation bookkeeping
         are never serialized.
+      required:
+        - id
+        - username
+        - email
+        - role
+        - email_verified
+        - is_banned
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -3137,6 +3160,24 @@ components:
         Server-side storage keys (file path, HLS path, thumbnail path) are
         deliberately withheld; play the video via the computed `hls_url` and
         `thumbnail_url`.
+      required:
+        - id
+        - title
+        - description
+        - filename
+        - file_size
+        - duration
+        - status
+        - visibility
+        - mime_type
+        - transcoding_progress
+        - available_qualities
+        - hls_ready
+        - view_count
+        - like_count
+        - comment_count
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -3255,6 +3296,12 @@ components:
 
     Like:
       type: object
+      required:
+        - id
+        - user_id
+        - video_id
+        - is_like
+        - created_at
       properties:
         id:
           type: string
@@ -3274,6 +3321,16 @@ components:
 
     Comment:
       type: object
+      required:
+        - id
+        - video_id
+        - user_id
+        - content
+        - like_count
+        - reply_count
+        - pinned
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -3316,6 +3373,12 @@ components:
 
     SubscriptionEntry:
       type: object
+      required:
+        - user_id
+        - username
+        - subscriber_count
+        - notify_uploads
+        - subscribed_at
       properties:
         user_id:
           type: string
@@ -3335,6 +3398,15 @@ components:
 
     Playlist:
       type: object
+      required:
+        - id
+        - user_id
+        - title
+        - description
+        - visibility
+        - video_count
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -3360,6 +3432,12 @@ components:
 
     PlaylistVideo:
       type: object
+      required:
+        - id
+        - playlist_id
+        - video_id
+        - position
+        - added_at
       properties:
         id:
           type: string
@@ -3378,6 +3456,10 @@ components:
 
     PlaylistItem:
       type: object
+      required:
+        - position
+        - added_at
+        - video
       properties:
         position:
           type: integer
@@ -3389,6 +3471,9 @@ components:
 
     WatchLaterItem:
       type: object
+      required:
+        - added_at
+        - video
       properties:
         added_at:
           type: string
@@ -3398,6 +3483,14 @@ components:
 
     WatchHistory:
       type: object
+      required:
+        - id
+        - user_id
+        - video_id
+        - watched_at
+        - watch_duration
+        - completed
+        - last_position
       properties:
         id:
           type: string
@@ -3420,6 +3513,14 @@ components:
 
     Notification:
       type: object
+      required:
+        - id
+        - user_id
+        - type
+        - title
+        - message
+        - read
+        - created_at
       properties:
         id:
           type: string
@@ -3454,6 +3555,20 @@ components:
 
     VideoSearchItem:
       type: object
+      required:
+        - video_id
+        - title
+        - description
+        - thumbnail_url
+        - duration
+        - views
+        - created_at
+        - username
+        - user_id
+        - user_avatar_url
+        - user_verified
+        - relevance
+        - snippet
       properties:
         video_id:
           type: string
@@ -3489,6 +3604,9 @@ components:
 
     CategoryCount:
       type: object
+      required:
+        - category
+        - video_count
       properties:
         category:
           type: string
@@ -3500,6 +3618,14 @@ components:
 
     ContentReport:
       type: object
+      required:
+        - id
+        - reporter_id
+        - report_type
+        - reason
+        - status
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -3591,6 +3717,26 @@ components:
 
     DashboardStats:
       type: object
+      required:
+        - total_users
+        - new_users_today
+        - new_users_this_week
+        - active_users_24h
+        - total_videos
+        - videos_today
+        - videos_this_week
+        - processing_videos
+        - failed_videos
+        - total_views
+        - views_today
+        - views_this_week
+        - total_storage_bytes
+        - storage_used_gb
+        - queued_jobs
+        - active_workers
+        - premium_users
+        - monthly_revenue
+        - last_updated
       properties:
         total_users:
           type: integer
@@ -3650,6 +3796,33 @@ components:
 
     VideoAnalytics:
       type: object
+      required:
+        - video_id
+        - title
+        - user_id
+        - username
+        - total_views
+        - unique_viewers
+        - likes
+        - dislikes
+        - comments
+        - shares
+        - total_watch_time
+        - avg_watch_time
+        - avg_watch_percent
+        - views_by_quality
+        - avg_buffer_time
+        - playback_errors
+        - source_direct
+        - source_search
+        - source_embed
+        - source_social
+        - top_countries
+        - device_mobile
+        - device_desktop
+        - device_tablet
+        - created_at
+        - last_viewed
       properties:
         video_id:
           type: string
@@ -3730,6 +3903,9 @@ components:
 
     CountryStats:
       type: object
+      required:
+        - country
+        - views
       properties:
         country:
           type: string
@@ -3739,6 +3915,15 @@ components:
 
     RealtimeMetrics:
       type: object
+      required:
+        - active_viewers
+        - uploads_last_hour
+        - views_last_hour
+        - current_cpu
+        - current_memory
+        - queued_jobs
+        - processing_jobs
+        - timestamp
       properties:
         active_viewers:
           type: integer
@@ -3765,6 +3950,9 @@ components:
 
     TimeSeriesData:
       type: object
+      required:
+        - label
+        - datapoints
       properties:
         label:
           type: string
@@ -3775,6 +3963,9 @@ components:
 
     DataPoint:
       type: object
+      required:
+        - timestamp
+        - value
       properties:
         timestamp:
           type: string
@@ -3784,6 +3975,17 @@ components:
 
     SystemMetrics:
       type: object
+      required:
+        - cpu_percent
+        - memory_total
+        - memory_used
+        - memory_percent
+        - disk_total
+        - disk_used
+        - disk_percent
+        - goroutines
+        - uptime
+        - timestamp
       properties:
         cpu_percent:
           type: number
@@ -3815,6 +4017,14 @@ components:
 
     QueueMetrics:
       type: object
+      required:
+        - pending_jobs
+        - active_jobs
+        - failed_jobs
+        - retry_queue
+        - archived_jobs
+        - processed_last
+        - timestamp
       properties:
         pending_jobs:
           type: integer
@@ -3840,6 +4050,14 @@ components:
 
     DatabaseMetrics:
       type: object
+      required:
+        - active_connections
+        - idle_connections
+        - max_connections
+        - slow_queries
+        - total_queries
+        - table_sizes
+        - timestamp
       properties:
         active_connections:
           type: integer
@@ -3864,6 +4082,15 @@ components:
 
     RedisMetrics:
       type: object
+      required:
+        - memory_used
+        - memory_peak
+        - total_keys
+        - hits
+        - misses
+        - hit_rate
+        - connected_clients
+        - timestamp
       properties:
         memory_used:
           type: integer
