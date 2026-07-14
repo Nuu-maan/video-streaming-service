@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -60,39 +59,6 @@ func (q *QueueClient) EnqueueVideoProcessing(ctx context.Context, videoID string
 		"video_id": videoID,
 		"task_id":  info.ID,
 		"queue":    info.Queue,
-	})
-
-	return nil
-}
-
-func (q *QueueClient) EnqueueThumbnailGeneration(ctx context.Context, videoID string) error {
-	payload := ThumbnailGenerationPayload{
-		VideoID: videoID,
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	task := asynq.NewTask(TypeThumbnailGeneration, payloadBytes)
-	opts := []asynq.Option{
-		asynq.MaxRetry(2),
-		asynq.Timeout(5 * time.Minute),
-		asynq.Queue("default"),
-	}
-
-	info, err := q.client.EnqueueContext(ctx, task, opts...)
-	if err != nil {
-		q.logger.Error(ctx, "failed to enqueue thumbnail generation task", err, map[string]interface{}{
-			"video_id": videoID,
-		})
-		return fmt.Errorf("failed to enqueue task: %w", err)
-	}
-
-	q.logger.Info(ctx, "thumbnail generation task enqueued", map[string]interface{}{
-		"video_id": videoID,
-		"task_id":  info.ID,
 	})
 
 	return nil
