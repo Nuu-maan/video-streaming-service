@@ -42,10 +42,18 @@ type UserRepository interface {
 	GetByID(ctx context.Context, userID uuid.UUID) (*domain.User, error)
 }
 
+// VideoFileRemover cleans a deleted video's files out of storage. Satisfied by
+// *UploadService. A nil remover is tolerated so tests that only exercise report
+// bookkeeping need no storage.
+type VideoFileRemover interface {
+	RemoveVideoFiles(ctx context.Context, video *domain.Video)
+}
+
 type ModerationService struct {
 	reportRepo ModerationRepository
 	videoRepo  VideoRepository
 	userRepo   UserRepository
+	files      VideoFileRemover
 	auditSvc   *AuditService
 }
 
@@ -53,12 +61,14 @@ func NewModerationService(
 	reportRepo ModerationRepository,
 	videoRepo VideoRepository,
 	userRepo UserRepository,
+	files VideoFileRemover,
 	auditSvc *AuditService,
 ) *ModerationService {
 	return &ModerationService{
 		reportRepo: reportRepo,
 		videoRepo:  videoRepo,
 		userRepo:   userRepo,
+		files:      files,
 		auditSvc:   auditSvc,
 	}
 }
@@ -120,8 +130,17 @@ func (s *ModerationService) ReviewReport(ctx context.Context, reportID, moderato
 	switch action {
 	case "delete_video":
 		if report.VideoID != nil {
+			// Loaded before the delete: the row carries the file path the
+			// storage cleanup needs, and it is gone afterwards.
+			video, err := s.videoRepo.GetByID(ctx, *report.VideoID)
+			if err != nil {
+				return fmt.Errorf("looking up reported video: %w", err)
+			}
 			if err := s.videoRepo.Delete(ctx, *report.VideoID); err != nil {
 				return fmt.Errorf("failed to delete video: %w", err)
+			}
+			if s.files != nil {
+				s.files.RemoveVideoFiles(ctx, video)
 			}
 		}
 		report.Resolve(moderatorID, action)
