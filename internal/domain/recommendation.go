@@ -72,6 +72,38 @@ func (it InteractionType) Validate() error {
 	return nil
 }
 
+// TrendingWindow is the span over which trending engagement is counted. The
+// values are the literal query-string tokens the API accepts.
+type TrendingWindow string
+
+const (
+	TrendingWindow24h TrendingWindow = "24h"
+	TrendingWindow7d  TrendingWindow = "7d"
+	TrendingWindow30d TrendingWindow = "30d"
+)
+
+// Hours returns the window length in whole hours, the unit the repository
+// hands to Postgres' make_interval.
+func (w TrendingWindow) Hours() int {
+	switch w {
+	case TrendingWindow7d:
+		return 7 * 24
+	case TrendingWindow30d:
+		return 30 * 24
+	default:
+		return 24
+	}
+}
+
+func (w TrendingWindow) Validate() error {
+	switch w {
+	case TrendingWindow24h, TrendingWindow7d, TrendingWindow30d:
+		return nil
+	default:
+		return ErrInvalidInput
+	}
+}
+
 type UserPreferences struct {
 	UserID             uuid.UUID
 	FavoriteCategories []string

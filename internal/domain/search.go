@@ -24,11 +24,16 @@ const (
 )
 
 type SearchFilters struct {
-	Duration     *DurationFilter
-	UploadDate   *DateFilter
-	Quality      []string
-	Categories   []string
-	Tags         []string
+	Duration   *DurationFilter
+	UploadDate *DateFilter
+	Quality    []string
+	Categories []string
+	Tags       []string
+	// MinDuration/MaxDuration are exact bounds in seconds. They coexist with the
+	// Duration presets because the API exposes numeric bounds while the presets
+	// remain for callers that want the coarse buckets.
+	MinDuration  *int
+	MaxDuration  *int
 	MinViews     *int64
 	MaxViews     *int64
 	OnlyVerified bool
@@ -38,7 +43,7 @@ type SearchFilters struct {
 type SearchQuery struct {
 	Query   string
 	Filters SearchFilters
-	SortBy  string // "relevance", "date", "views", "rating"
+	SortBy  string // "relevance", "newest", "views", "likes"
 	Page    int
 	Limit   int
 }
@@ -63,6 +68,13 @@ type SearchFacets struct {
 	Categories  map[string]int64 `json:"categories"`
 	Durations   map[string]int64 `json:"durations"`
 	UploadDates map[string]int64 `json:"upload_dates"`
+}
+
+// CategoryCount is one row of the public category index: a category name and
+// how many publicly listable videos carry it.
+type CategoryCount struct {
+	Category   string `json:"category"`
+	VideoCount int64  `json:"video_count"`
 }
 
 type SearchResult struct {
@@ -94,9 +106,9 @@ func (sq *SearchQuery) Validate() error {
 
 	validSortBy := map[string]bool{
 		"relevance": true,
-		"date":      true,
+		"newest":    true,
 		"views":     true,
-		"rating":    true,
+		"likes":     true,
 	}
 
 	if !validSortBy[sq.SortBy] {
