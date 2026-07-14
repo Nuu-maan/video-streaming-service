@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/Nuu-maan/video-streaming-service/internal/domain"
 	"github.com/Nuu-maan/video-streaming-service/pkg/appctx"
 	"github.com/Nuu-maan/video-streaming-service/pkg/jwt"
+	"github.com/Nuu-maan/video-streaming-service/pkg/logger"
 )
 
 const (
@@ -24,7 +27,38 @@ func init() {
 }
 
 func newTestTokens(secret string) *jwt.TokenService {
-	return jwt.NewTokenService(secret, time.Hour, "test-issuer")
+	return jwt.NewTokenService(secret, time.Hour, 24*time.Hour, "test-issuer")
+}
+
+func testLogger() *logger.Logger {
+	return logger.New("production", "error")
+}
+
+// newTestAuthenticator builds an Authenticator without revocation checking,
+// for the tests that only exercise signature validation.
+func newTestAuthenticator(tokens *jwt.TokenService) *Authenticator {
+	return NewAuthenticator(tokens, nil, false, testLogger())
+}
+
+// fakeRevocations is an in-memory RevocationChecker. A non-nil err simulates
+// the revocation store being unreachable.
+type fakeRevocations struct {
+	revokedJTIs map[string]bool
+	minIssuedAt map[string]time.Time
+	err         error
+}
+
+func (f *fakeRevocations) IsRevoked(_ context.Context, jti, userID string, issuedAt time.Time) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if f.revokedJTIs[jti] {
+		return true, nil
+	}
+	if cutoff, ok := f.minIssuedAt[userID]; ok && issuedAt.Before(cutoff) {
+		return true, nil
+	}
+	return false, nil
 }
 
 // mintToken returns a signed token for a caller with the given role.
@@ -39,7 +73,7 @@ func mintToken(t *testing.T, tokens *jwt.TokenService, userID uuid.UUID, usernam
 
 func TestRequireAuth(t *testing.T) {
 	tokens := newTestTokens(testSecret)
-	auth := NewAuthenticator(tokens)
+	auth := newTestAuthenticator(tokens)
 
 	userID := uuid.New()
 	validToken := mintToken(t, tokens, userID, "gopher", domain.RoleUser)
@@ -138,7 +172,7 @@ func TestRequireAuth(t *testing.T) {
 
 func TestOptionalAuth(t *testing.T) {
 	tokens := newTestTokens(testSecret)
-	auth := NewAuthenticator(tokens)
+	auth := newTestAuthenticator(tokens)
 
 	userID := uuid.New()
 	validToken := mintToken(t, tokens, userID, "gopher", domain.RoleUser)
@@ -207,7 +241,7 @@ func TestOptionalAuth(t *testing.T) {
 
 func TestRequirePermission(t *testing.T) {
 	tokens := newTestTokens(testSecret)
-	auth := NewAuthenticator(tokens)
+	auth := newTestAuthenticator(tokens)
 
 	tests := []struct {
 		name       string
@@ -283,11 +317,121 @@ func TestRequirePermission(t *testing.T) {
 	}
 }
 
+func TestRequireAuthRevocation(t *testing.T) {
+	tokens := newTestTokens(testSecret)
+	userID := uuid.New()
+	token := mintToken(t, tokens, userID, "gopher", domain.RoleUser)
+
+	claims, err := tokens.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+	if claims.ID == "" {
+		t.Fatal("token has no jti; revocation tests cannot key on it")
+	}
+
+	tests := []struct {
+		name        string
+		revocations RevocationChecker
+		failOpen    bool
+		wantStatus  int
+	}{
+		{
+			name:        "token not revoked",
+			revocations: &fakeRevocations{},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "token revoked by jti",
+			revocations: &fakeRevocations{revokedJTIs: map[string]bool{claims.ID: true}},
+			wantStatus:  http.StatusUnauthorized,
+		},
+		{
+			name: "all sessions revoked after issuance",
+			revocations: &fakeRevocations{minIssuedAt: map[string]time.Time{
+				userID.String(): time.Now().Add(time.Minute),
+			}},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:        "store unreachable fails closed by default",
+			revocations: &fakeRevocations{err: errors.New("redis: connection refused")},
+			wantStatus:  http.StatusServiceUnavailable,
+		},
+		{
+			name:        "store unreachable with fail-open configured",
+			revocations: &fakeRevocations{err: errors.New("redis: connection refused")},
+			failOpen:    true,
+			wantStatus:  http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := NewAuthenticator(tokens, tt.revocations, tt.failOpen, testLogger())
+
+			var handlerRan bool
+			router := gin.New()
+			router.GET("/protected", auth.RequireAuth(), func(c *gin.Context) {
+				handlerRan = true
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if handlerRan != (tt.wantStatus == http.StatusOK) {
+				t.Errorf("handler ran = %v, want %v", handlerRan, tt.wantStatus == http.StatusOK)
+			}
+		})
+	}
+}
+
+// TestOptionalAuthRevokedToken verifies a revoked token on a public endpoint
+// downgrades to anonymous rather than failing the request.
+func TestOptionalAuthRevokedToken(t *testing.T) {
+	tokens := newTestTokens(testSecret)
+	token := mintToken(t, tokens, uuid.New(), "gopher", domain.RoleUser)
+
+	claims, err := tokens.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+
+	auth := NewAuthenticator(tokens, &fakeRevocations{
+		revokedJTIs: map[string]bool{claims.ID: true},
+	}, false, testLogger())
+
+	var principalFound bool
+	router := gin.New()
+	router.GET("/public", auth.OptionalAuth(), func(c *gin.Context) {
+		_, principalFound = appctx.PrincipalFrom(c.Request.Context())
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/public", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if principalFound {
+		t.Error("a revoked token attached a principal on a public endpoint")
+	}
+}
+
 // TestRequirePermissionWithoutAuth covers RequirePermission mounted without
 // RequireAuth in front of it: with no principal in the context it must reject
 // with 401 rather than admit the caller.
 func TestRequirePermissionWithoutAuth(t *testing.T) {
-	auth := NewAuthenticator(newTestTokens(testSecret))
+	auth := newTestAuthenticator(newTestTokens(testSecret))
 
 	handlerRan := false
 	router := gin.New()
