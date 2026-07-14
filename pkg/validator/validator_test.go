@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -236,6 +237,51 @@ func TestValidateVideoFile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Text that is not valid UTF-8 must be rejected here, as bad input.
+//
+// Regression test. Nothing checked encoding, so the bytes travelled all the way
+// to Postgres, which refused them with SQLSTATE 22021 and turned a malformed
+// title into a 500 INTERNAL_ERROR. A form posted in Windows-1252 is enough to
+// cause it: an em dash arrives as the single byte 0x97, which no UTF-8 decoder
+// will accept.
+func TestValidateTextRejectsInvalidUTF8(t *testing.T) {
+	// 0x97 is an em dash in Windows-1252 and an illegal continuation byte in UTF-8.
+	cp1252EmDash := string([]byte{'A', 'u', 'r', 'o', 'r', 'a', ' ', 0x97, ' ', 'i', 'i'})
+
+	if utf8.ValidString(cp1252EmDash) {
+		t.Fatal("test fixture is valid UTF-8; it cannot exercise the bug")
+	}
+
+	if err := ValidateTitle(cp1252EmDash); !errors.Is(err, ErrInvalidTitle) {
+		t.Errorf("ValidateTitle(invalid utf-8) = %v, want ErrInvalidTitle so the handler answers 400 rather than 500", err)
+	}
+	if err := ValidateDescription(cp1252EmDash); !errors.Is(err, ErrInvalidDescription) {
+		t.Errorf("ValidateDescription(invalid utf-8) = %v, want ErrInvalidDescription", err)
+	}
+}
+
+// Length is a count of characters, not bytes.
+//
+// `len(string)` counts bytes, so a title in a language that needs three bytes per
+// character was refused at roughly 85 characters while the database column
+// happily holds 255 of them.
+func TestValidateTitleCountsRunesNotBytes(t *testing.T) {
+	// 200 characters, 600 bytes. Well inside the limit, and the old byte-counting
+	// check rejected it.
+	title := strings.Repeat("あ", 200)
+
+	if len(title) <= 255 {
+		t.Fatal("fixture is under 255 bytes; it cannot exercise the bug")
+	}
+	if err := ValidateTitle(title); err != nil {
+		t.Errorf("ValidateTitle(200 multi-byte chars) = %v, want nil — the limit is 255 characters, not bytes", err)
+	}
+
+	if err := ValidateTitle(strings.Repeat("あ", 256)); !errors.Is(err, ErrInvalidTitle) {
+		t.Error("ValidateTitle(256 chars) = nil, want ErrInvalidTitle")
 	}
 }
 
