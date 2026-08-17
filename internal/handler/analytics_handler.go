@@ -44,6 +44,11 @@ func (h *AnalyticsHandler) GetDashboard(c *gin.Context) {
 }
 
 // GetVideoAnalytics returns the engagement breakdown for one video.
+//
+// It backs two routes: the owner-facing /videos/:id/analytics and the
+// admin-facing /admin/analytics/videos/:id. The difference is carried entirely
+// by the caller's permission — an owner sees their own video, a holder of
+// view_analytics sees any — so one handler serves both.
 func (h *AnalyticsHandler) GetVideoAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -58,8 +63,9 @@ func (h *AnalyticsHandler) GetVideoAnalytics(c *gin.Context) {
 		response.Unauthorized(c, "Authentication required")
 		return
 	}
+	canViewAny := principal.HasPermission(domain.PermissionViewAnalytics)
 
-	analytics, err := h.analytics.GetVideoAnalytics(ctx, videoID, principal.UserID)
+	analytics, err := h.analytics.GetVideoAnalytics(ctx, videoID, principal.UserID, canViewAny)
 	if err != nil {
 		if errors.Is(err, domain.ErrVideoNotFound) {
 			response.NotFound(c, "Video not found")
@@ -108,7 +114,8 @@ func (h *AnalyticsHandler) GetRealtimeMetrics(c *gin.Context) {
 }
 
 // GetViewsTimeSeries returns a view count series for a video, bucketed by the
-// requested interval.
+// requested interval. Like GetVideoAnalytics it serves both the owner-facing
+// and the admin-facing route.
 func (h *AnalyticsHandler) GetViewsTimeSeries(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -118,13 +125,20 @@ func (h *AnalyticsHandler) GetViewsTimeSeries(c *gin.Context) {
 		return
 	}
 
+	principal, ok := appctx.PrincipalFrom(ctx)
+	if !ok {
+		response.Unauthorized(c, "Authentication required")
+		return
+	}
+	canViewAny := principal.HasPermission(domain.PermissionViewAnalytics)
+
 	interval := c.DefaultQuery("interval", "hour")
 	if !isValidInterval(interval) {
 		response.ValidationError(c, "interval must be one of: hour, day, week, month")
 		return
 	}
 
-	series, err := h.analytics.GetViewsTimeSeries(ctx, videoID, interval)
+	series, err := h.analytics.GetViewsTimeSeries(ctx, videoID, interval, principal.UserID, canViewAny)
 	if err != nil {
 		if errors.Is(err, domain.ErrVideoNotFound) {
 			response.NotFound(c, "Video not found")

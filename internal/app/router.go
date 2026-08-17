@@ -131,6 +131,15 @@ func (a *App) registerAPIRoutes(api *gin.RouterGroup) {
 		videos.GET("/:id/status", auth.OptionalAuth(), a.videoHandler.GetVideoStatus)
 		videos.GET("/:id/related", a.searchHandler.Related)
 
+		// A creator's own numbers. These used to exist only under
+		// /admin/analytics, gated on view_analytics — a permission no ordinary
+		// user holds — so an uploader could not see how their own video was
+		// doing. The service resolves ownership; a caller who neither owns the
+		// video nor holds the permission is answered 404, exactly as they would
+		// be for a video they may not watch.
+		videos.GET("/:id/analytics", auth.RequireAuth(), a.analyticsHandler.GetVideoAnalytics)
+		videos.GET("/:id/analytics/views", auth.RequireAuth(), a.analyticsHandler.GetViewsTimeSeries)
+
 		// Writes require a caller. Upload was previously anonymous, so an
 		// uploaded video had no owner and nobody could be held to it.
 		videos.POST("/upload",
