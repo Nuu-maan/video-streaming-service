@@ -46,14 +46,14 @@ export function WatchLaterButton({
 
       if (result.ok) {
         setSaved(result.saved);
-        toast.success(result.saved ? "Saved to Watch later." : "Removed from Watch later.");
+        toast.success(result.saved ? "Saved." : "Removed from Saved.");
         return;
       }
       toast.error(result.message);
     });
   }
 
-  const label = optimisticSaved ? "Remove from Watch later" : "Save to Watch later";
+  const label = optimisticSaved ? "Remove from Saved" : "Save for later";
   const Icon = optimisticSaved ? Check : Clock;
 
   if (variant === "icon") {

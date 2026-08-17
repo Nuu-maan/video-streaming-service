@@ -31,14 +31,14 @@ export function PlaylistActions({ playlist }: { playlist: Playlist }) {
       return;
     }
     toast.success(`Deleted “${playlist.title}”.`);
-    router.push(routes.playlists);
+    router.push(routes.collections);
   }
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="icon" aria-label="Playlist options">
+          <Button variant="outline" size="icon" aria-label="Collection options">
             <Ellipsis aria-hidden />
           </Button>
         </DropdownMenuTrigger>
@@ -60,8 +60,8 @@ export function PlaylistActions({ playlist }: { playlist: Playlist }) {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={`Delete “${playlist.title}”?`}
-        description="The playlist goes away. The videos in it stay exactly where they are."
-        confirmLabel="Delete playlist"
+        description="The collection goes away. The videos in it stay exactly where they are."
+        confirmLabel="Delete collection"
         destructive
         onConfirm={handleDelete}
       />

@@ -82,7 +82,7 @@ export function SubscribeButton({
         from={<Bell aria-hidden className="size-4" />}
         to={<BellOff aria-hidden className="size-4" />}
       />
-      {optimisticSubscribed ? "Subscribed" : "Subscribe"}
+      {optimisticSubscribed ? "Following" : "Follow"}
     </Button>
   );
 }

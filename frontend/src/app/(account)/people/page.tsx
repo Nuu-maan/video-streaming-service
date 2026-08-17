@@ -14,14 +14,14 @@ import { listMySubscriptions } from "@/features/subscriptions/api";
 import { SubscriptionCard } from "@/features/subscriptions/components/subscription-card";
 import { isApiError } from "@/lib/api-error";
 
-export const metadata: Metadata = { title: "Subscriptions" };
+export const metadata: Metadata = { title: "People" };
 
 function toPage(value: string | string[] | undefined): number {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
-export default async function SubscriptionsPage(props: PageProps<"/subscriptions">) {
+export default async function SubscriptionsPage(props: PageProps<"/people">) {
   const searchParams = await props.searchParams;
   const page = toPage(searchParams.page);
 
@@ -40,8 +40,8 @@ export default async function SubscriptionsPage(props: PageProps<"/subscriptions
   return (
     <>
       <PageHeader
-        title="Subscriptions"
-        description="Creators you follow. New uploads from them show up on your home feed."
+        title="People"
+        description="People whose uploads you follow. Their new videos appear in Recently added."
       />
 
       {result === "rate-limited" ? (
@@ -51,17 +51,17 @@ export default async function SubscriptionsPage(props: PageProps<"/subscriptions
         />
       ) : result === "failed" ? (
         <ErrorState
-          title="Your subscriptions didn't load"
+          title="Your list didn't load"
           description="Refresh the page to try again."
         />
       ) : result.items.length === 0 ? (
         <EmptyState
           icon={UsersRound}
           title="You aren't following anyone yet"
-          description="Subscribe to a creator and their new videos will find you instead of the other way round."
+          description="Follow someone and their new videos will find you instead of the other way round."
           action={
             <Button asChild size="sm" variant="secondary">
-              <Link href={routes.home}>Find creators</Link>
+              <Link href={routes.videos}>Browse videos</Link>
             </Button>
           }
         />

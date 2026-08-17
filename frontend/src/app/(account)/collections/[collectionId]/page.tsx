@@ -30,9 +30,9 @@ function toPage(value: string | string[] | undefined): number {
 }
 
 export async function generateMetadata(
-  props: PageProps<"/playlists/[playlistId]">,
+  props: PageProps<"/collections/[collectionId]">,
 ): Promise<Metadata> {
-  const { playlistId } = await props.params;
+  const { collectionId: playlistId } = await props.params;
   const playlist = await getPlaylist(playlistId).catch(() => null);
   return { title: playlist?.title ?? "Playlist" };
 }
@@ -43,8 +43,8 @@ export async function generateMetadata(
  * and never "you don't have permission", which would be a claim we cannot make
  * and a leak if we could.
  */
-export default async function PlaylistPage(props: PageProps<"/playlists/[playlistId]">) {
-  const [{ playlistId }, searchParams] = await Promise.all([props.params, props.searchParams]);
+export default async function PlaylistPage(props: PageProps<"/collections/[collectionId]">) {
+  const [{ collectionId: playlistId }, searchParams] = await Promise.all([props.params, props.searchParams]);
   const page = toPage(searchParams.page);
 
   /*

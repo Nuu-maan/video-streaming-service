@@ -23,7 +23,7 @@ export function PlaylistCard({ playlist, className }: { playlist: Playlist; clas
 
   return (
     <NextLink
-      href={routes.playlist(playlist.id)}
+      href={routes.collection(playlist.id)}
       className={cn(
         "group flex flex-col gap-3 rounded-xl p-3 outline-none transition-shadow duration-(--motion-fast) shadow-border hover:shadow-border-hover focus-visible:ring-3 focus-visible:ring-ring/50",
         className,

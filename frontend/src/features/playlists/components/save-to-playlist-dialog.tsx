@@ -109,7 +109,7 @@ export function SaveToPlaylistDialog({
 
   async function handleOpenChange(next: boolean) {
     if (next && !isAuthenticated) {
-      promptSignIn("Sign in to save videos to a playlist.");
+      promptSignIn("Sign in to save videos to a collection.");
       return;
     }
 
@@ -252,14 +252,14 @@ export function SaveToPlaylistDialog({
           {creating ? (
             <form onSubmit={handleCreate} className="flex flex-col gap-2 p-1">
               <Label htmlFor="new-playlist-title" className="sr-only">
-                Playlist name
+                Collection name
               </Label>
               <Input
                 id="new-playlist-title"
                 value={newTitle}
                 onChange={(event) => setNewTitle(event.target.value)}
                 maxLength={MAX_PLAYLIST_TITLE}
-                placeholder="Playlist name"
+                placeholder="Collection name"
                 autoComplete="off"
                 autoFocus
                 disabled={savingNew}
@@ -283,7 +283,7 @@ export function SaveToPlaylistDialog({
                   Create
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">New playlists start out private.</p>
+              <p className="text-xs text-muted-foreground">New collections start out private.</p>
             </form>
           ) : (
             <Button
@@ -293,7 +293,7 @@ export function SaveToPlaylistDialog({
               onClick={() => setCreating(true)}
             >
               <Plus aria-hidden />
-              New playlist
+              New collection
             </Button>
           )}
         </div>

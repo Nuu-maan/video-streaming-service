@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { routes } from "@/config/routes";
 import { listComments, listReplies } from "@/features/comments/api";
-import { commentSchema } from "@/features/comments/schemas";
+import { commentSchema, type NoteSort } from "@/features/comments/schemas";
 import type {
   ActionFailure,
   CommentDeleteResult,
@@ -18,7 +18,7 @@ import type { Comment } from "@/types/common";
 function fail(error: unknown): ActionFailure {
   if (isApiError(error)) {
     if (error.isUnauthorized) {
-      return { ok: false, code: "UNAUTHORIZED", message: "Sign in to join the conversation." };
+      return { ok: false, code: "UNAUTHORIZED", message: "Sign in to leave a note." };
     }
     if (error.isForbidden) {
       return { ok: false, code: "FORBIDDEN", message: "That isn't yours to change." };
@@ -27,7 +27,7 @@ function fail(error: unknown): ActionFailure {
       return { ok: false, code: "RATE_LIMITED", message: "Slow down a moment, then try again." };
     }
     if (error.isNotFound) {
-      return { ok: false, code: "NOT_FOUND", message: "That comment is no longer there." };
+      return { ok: false, code: "NOT_FOUND", message: "That note is no longer there." };
     }
     return { ok: false, code: error.code, message: error.message };
   }
@@ -43,15 +43,26 @@ export async function createComment(
   videoId: string,
   content: string,
   parentId?: string,
+  videoTimestamp?: number,
 ): Promise<CommentResult> {
-  const parsed = commentSchema.safeParse({ content });
+  const parsed = commentSchema.safeParse({
+    content,
+    // Rounded before validating, not after: the playhead arrives as a float and
+    // the schema demands an integer, so an un-rounded 94.3 would fail the parse
+    // rather than anchoring the note at 94.
+    videoTimestamp: videoTimestamp === undefined ? undefined : Math.max(0, Math.floor(videoTimestamp)),
+  });
   if (!parsed.success) {
     return { ok: false, code: "VALIDATION", message: parsed.error.issues[0].message };
   }
 
   try {
     const comment = await api.post<Comment>(`/videos/${videoId}/comments`, {
-      body: { content: parsed.data.content, parent_id: parentId },
+      body: {
+        content: parsed.data.content,
+        parent_id: parentId,
+        video_timestamp: parsed.data.videoTimestamp,
+      },
     });
     revalidatePath(routes.video(videoId));
     return { ok: true, comment };
@@ -99,9 +110,13 @@ export async function deleteComment(commentId: string, videoId: string): Promise
  * owns optimistic inserts), and a client component has no token — so "load
  * more" comes back through a Server Action rather than a fetch.
  */
-export async function fetchComments(videoId: string, page: number): Promise<CommentPageResult> {
+export async function fetchComments(
+  videoId: string,
+  page: number,
+  sort?: NoteSort,
+): Promise<CommentPageResult> {
   try {
-    const result = await listComments(videoId, { page });
+    const result = await listComments(videoId, { page, sort });
     return { ok: true, items: result.items, pagination: result.pagination };
   } catch (error) {
     return fail(error);

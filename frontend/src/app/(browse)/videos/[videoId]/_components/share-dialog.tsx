@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Share2 } from "lucide-react";
+import { Check, Copy, Globe, Link2, Lock, Share2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -15,29 +15,58 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import type { Video } from "@/types/common";
 
 interface ShareDialogProps {
   url: string;
   title: string;
-  /** Unlisted and private videos are shareable only in the sense that the link exists. */
-  visibility: "public" | "unlisted" | "private";
+  visibility: Video["visibility"];
 }
 
 const COPIED_RESET_MS = 2_000;
 
 /**
- * Share: a link, a copy button, and the OS share sheet where there is one.
+ * Who can open this, and the link to give them.
  *
- * The copy button confirms in place — a checkmark that swaps for the copy icon —
- * rather than only firing a toast. The toast is for the case where the click
- * lands and the eye is elsewhere; the icon is for the case where it isn't.
+ * Share is a primary action here rather than an afterthought icon: this is a
+ * workspace, so handing a video to a specific person is the point of putting it
+ * in one, and burying that behind an overflow menu would hide the product's
+ * whole reason for having three visibility states.
  *
- * A private video says so. Handing someone a link that will 404 for them without
- * warning is the kind of small betrayal that makes people stop trusting a share
- * button.
+ * The visibility is stated plainly, and stated FIRST, because it is the fact
+ * that decides whether the link below will work for the person you send it to.
+ * A private video says so before you copy anything — handing someone a link that
+ * 404s for them without warning is the kind of small betrayal that makes people
+ * stop trusting a share button.
+ *
+ * It reports; it does not change. The API has no endpoint for editing a video
+ * after upload — no PATCH /videos/:id exists — so visibility is fixed at the
+ * moment of upload. A control here would be a lie. See the note in the upload
+ * form, which is where the decision actually gets made.
  */
+const VISIBILITY = {
+  public: {
+    icon: Globe,
+    label: "Public",
+    detail: "Anyone with the link can watch, and it can be found by search.",
+  },
+  unlisted: {
+    icon: Link2,
+    label: "Unlisted",
+    detail: "Anyone with the link can watch. It stays out of search and listings.",
+  },
+  private: {
+    icon: Lock,
+    label: "Private",
+    detail: "Only you can open this. Nobody you send the link to will be able to watch it.",
+  },
+} as const;
+
 export function ShareDialog({ url, title, visibility }: ShareDialogProps) {
   const [copied, setCopied] = useState(false);
+
+  const state = VISIBILITY[visibility] ?? VISIBILITY.private;
+  const Icon = state.icon;
 
   const copy = async () => {
     try {
@@ -62,7 +91,7 @@ export function ShareDialog({ url, title, visibility }: ShareDialogProps) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="sm" className="rounded-full">
+        <Button size="sm" className="rounded-full">
           <Share2 aria-hidden />
           Share
         </Button>
@@ -71,14 +100,16 @@ export function ShareDialog({ url, title, visibility }: ShareDialogProps) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Share this video</DialogTitle>
-          <DialogDescription>
-            {visibility === "private"
-              ? "This video is private. Only you can open this link — make it unlisted or public before sharing it."
-              : visibility === "unlisted"
-                ? "This video is unlisted. Anyone with the link can watch it, but it won't appear in search."
-                : "Anyone with this link can watch."}
-          </DialogDescription>
+          <DialogDescription>Check who can open it before you send the link.</DialogDescription>
         </DialogHeader>
+
+        <div className="flex items-start gap-3 rounded-lg bg-muted/60 p-3 ring-1 ring-border/60 ring-inset">
+          <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{state.label}</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{state.detail}</p>
+          </div>
+        </div>
 
         <div className="flex items-center gap-2">
           <Input

@@ -76,7 +76,7 @@ export function PlaylistFormDialog({
       }
 
       setOpen(false);
-      toast.success(editing ? "Playlist updated." : `Created “${result.playlist.title}”.`);
+      toast.success(editing ? "Collection updated." : `Created “${result.playlist.title}”.`);
       if (!editing) {
         setTitle("");
         setDescription("");
@@ -91,7 +91,7 @@ export function PlaylistFormDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit playlist" : "New playlist"}</DialogTitle>
+            <DialogTitle>{editing ? "Edit collection" : "New collection"}</DialogTitle>
             <DialogDescription className="text-pretty">
               {editing
                 ? "Change the name, the description, or who can see it."
@@ -157,7 +157,7 @@ export function PlaylistFormDialog({
             </Button>
             <Button type="submit" disabled={pending || !title.trim()}>
               {pending ? <LoaderCircle aria-hidden className="animate-spin" /> : null}
-              {editing ? "Save changes" : "Create playlist"}
+              {editing ? "Save changes" : "Create collection"}
             </Button>
           </DialogFooter>
         </form>

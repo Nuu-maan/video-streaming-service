@@ -15,6 +15,7 @@ export function toStudioRow(video: Video): StudioVideoRow {
     status: video.status,
     visibility: video.visibility,
     transcodingProgress: video.transcoding_progress,
+    availableQualities: video.available_qualities ?? [],
     duration: video.duration,
     viewCount: video.view_count,
     likeCount: video.like_count,

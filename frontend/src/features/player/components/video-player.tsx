@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { IconSwap } from "@/components/common/icon-swap";
@@ -19,7 +19,23 @@ import { useWatchProgress } from "@/features/player/hooks/use-watch-progress";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+/**
+ * What something outside the player may do to it.
+ *
+ * `currentTime` is a function rather than a value on purpose. The notes rail
+ * needs the playhead at exactly one moment — when someone starts writing a note
+ * — and subscribing to it would re-render the whole rail four times a second
+ * for the entire length of a film to service a value read once.
+ */
+export interface PlayerHandle {
+  /** Seek, clamped by the media element itself. */
+  seekTo(seconds: number): void;
+  /** The playhead at the instant of the call, or 0 before metadata lands. */
+  currentTime(): number;
+}
+
 interface VideoPlayerProps {
+  ref?: React.Ref<PlayerHandle>;
   videoId: string;
   /**
    * The manifest URL. The PAGE decides this, not the player: a public video is
@@ -36,6 +52,8 @@ interface VideoPlayerProps {
   trackProgress?: boolean;
   /** Seconds to resume from, read from the viewer's history on the server. */
   resumeAt?: number | null;
+  /** Seconds at which notes are anchored, drawn as ticks on the scrub bar. */
+  markers?: number[];
   className?: string;
 }
 
@@ -53,18 +71,35 @@ interface VideoPlayerProps {
  * twenty videos does not accumulate twenty media pipelines and a dead tab.
  */
 export function VideoPlayer({
+  ref,
   videoId,
   src,
   poster,
   title,
   trackProgress = false,
   resumeAt,
+  markers,
   className,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [state, actions] = usePlayerState({ videoRef, containerRef });
+
+  /**
+   * The outside handle. `currentTime` reads the media element rather than
+   * React state: `state.currentTime` is a throttled mirror, and a note anchored
+   * to "roughly where the mirror last was" is a note pointing at the wrong
+   * frame. The element always knows exactly.
+   */
+  useImperativeHandle(
+    ref,
+    () => ({
+      seekTo: actions.seekTo,
+      currentTime: () => videoRef.current?.currentTime ?? 0,
+    }),
+    [actions],
+  );
   const { levels, currentLevel, activeHeight, failure, setLevel, retry } = useHls({ videoRef, src });
 
   // Pin the controls open whenever the viewer is clearly still using them.
@@ -264,6 +299,7 @@ export function VideoPlayer({
             bufferedTo={state.bufferedTo}
             onSeek={actions.seekTo}
             onScrubbingChange={setScrubbing}
+            markers={markers}
           />
         </div>
 

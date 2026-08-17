@@ -7,7 +7,7 @@ export const playlistSchema = z.object({
   title: z
     .string()
     .trim()
-    .min(1, "Give the playlist a name.")
+    .min(1, "Give the collection a name.")
     .max(MAX_PLAYLIST_TITLE, `At most ${MAX_PLAYLIST_TITLE} characters.`),
   description: z.string().trim().max(MAX_PLAYLIST_DESCRIPTION).optional(),
   visibility: z.enum(["public", "private", "unlisted"]),

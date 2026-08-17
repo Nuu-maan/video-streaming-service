@@ -13,6 +13,12 @@ interface PlayerScrubberProps {
   onSeek: (seconds: number) => void;
   /** Fires on pointer-down and on release: the caller pins the controls open while dragging. */
   onScrubbingChange: (scrubbing: boolean) => void;
+  /**
+   * Seconds at which a note is anchored. Drawn as ticks along the track, so the
+   * shape of a video's feedback is legible before a single note is read — three
+   * ticks clustered at 0:40 say something no list of comments says as fast.
+   */
+  markers?: number[];
   className?: string;
 }
 
@@ -54,6 +60,7 @@ export function PlayerScrubber({
   bufferedTo,
   onSeek,
   onScrubbingChange,
+  markers,
   className,
 }: PlayerScrubberProps) {
   const trackRef = useRef<HTMLDivElement>(null);
@@ -185,6 +192,32 @@ export function PlayerScrubber({
           style={{ transform: `scaleX(${played})` }}
         />
       </div>
+
+      {/*
+       * Note ticks. Outside the track element on purpose: the track is
+       * `overflow-hidden` (it has to be, or the fills escape their rounded
+       * corners) and it scales 2x on hover, which would stretch a tick into a
+       * smear. Out here they keep their width and stay put while the bar grows
+       * under them.
+       *
+       * `translate` in `cqw` for the same reason as the thumb — a composite
+       * rather than a layout pass — and the same standalone-property trick, so
+       * the position is not multiplied by any scale.
+       *
+       * Not interactive: the tick marks where a note is, the note itself is the
+       * control. A 2px click target pretending to be a button would be a worse
+       * version of the list sitting next to it.
+       */}
+      {duration > 0 && markers?.length
+        ? markers.map((seconds) => (
+            <div
+              key={seconds}
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-0 h-2.5 w-0.5 -translate-y-1/2 rounded-full bg-brand-400 shadow-[0_0_0_1px_rgb(0_0_0/0.35)]"
+              style={{ translate: `calc(${Math.min(seconds / duration, 1) * 100}cqw - 50%) -50%` }}
+            />
+          ))
+        : null}
 
       {/* transition-[scale], NOT transition-transform: the latter also covers
           `translate`, which would ease the thumb's POSITION and leave it trailing

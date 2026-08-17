@@ -25,10 +25,10 @@ import type { Playlist } from "@/types/common";
 function fail(error: unknown): ActionFailure {
   if (isApiError(error)) {
     if (error.isUnauthorized) {
-      return { ok: false, code: "UNAUTHORIZED", message: "Sign in to manage playlists." };
+      return { ok: false, code: "UNAUTHORIZED", message: "Sign in to manage collections." };
     }
     if (error.isForbidden) {
-      return { ok: false, code: "FORBIDDEN", message: "That playlist isn't yours." };
+      return { ok: false, code: "FORBIDDEN", message: "That collection isn't yours." };
     }
     if (error.isRateLimited) {
       return { ok: false, code: "RATE_LIMITED", message: "Slow down a moment, then try again." };
@@ -36,7 +36,7 @@ function fail(error: unknown): ActionFailure {
     /* A private playlist you do not own answers 404, exactly as a missing one
        does. "Not found" is the only honest thing to say. */
     if (error.isNotFound) {
-      return { ok: false, code: "NOT_FOUND", message: "Playlist not found." };
+      return { ok: false, code: "NOT_FOUND", message: "Collection not found." };
     }
     return { ok: false, code: error.code, message: error.message };
   }
@@ -51,7 +51,7 @@ export async function createPlaylist(input: PlaylistInput): Promise<PlaylistResu
 
   try {
     const playlist = await api.post<Playlist>("/playlists", { body: parsed.data });
-    revalidatePath(routes.playlists);
+    revalidatePath(routes.collections);
     return { ok: true, playlist };
   } catch (error) {
     return fail(error);
@@ -69,8 +69,8 @@ export async function updatePlaylist(
 
   try {
     const playlist = await api.patch<Playlist>(`/playlists/${playlistId}`, { body: parsed.data });
-    revalidatePath(routes.playlists);
-    revalidatePath(routes.playlist(playlistId));
+    revalidatePath(routes.collections);
+    revalidatePath(routes.collection(playlistId));
     return { ok: true, playlist };
   } catch (error) {
     return fail(error);
@@ -83,7 +83,7 @@ export async function deletePlaylist(playlistId: string): Promise<PlaylistMutati
   } catch (error) {
     if (!(isApiError(error) && error.isNotFound)) return fail(error);
   }
-  revalidatePath(routes.playlists);
+  revalidatePath(routes.collections);
   return { ok: true };
 }
 
@@ -98,7 +98,7 @@ export async function addVideoToPlaylist(
     // ALREADY_IN_PLAYLIST means the desired end state is already the actual one.
     if (!(isApiError(error) && error.status === 409)) return fail(error);
   }
-  revalidatePath(routes.playlist(playlistId));
+  revalidatePath(routes.collection(playlistId));
   return { ok: true };
 }
 
@@ -111,7 +111,7 @@ export async function removeVideoFromPlaylist(
   } catch (error) {
     if (!(isApiError(error) && error.isNotFound)) return fail(error);
   }
-  revalidatePath(routes.playlist(playlistId));
+  revalidatePath(routes.collection(playlistId));
   return { ok: true };
 }
 

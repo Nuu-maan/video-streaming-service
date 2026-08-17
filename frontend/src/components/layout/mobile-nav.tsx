@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-import { exploreNav, libraryNav, type NavItem } from "@/components/layout/nav-items";
+import { libraryNav, workspaceNav, type NavItem } from "@/components/layout/nav-items";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -77,7 +77,7 @@ export function MobileNav() {
           </SheetTitle>
         </SheetHeader>
         <nav aria-label="Primary" className="flex flex-col gap-1 p-3">
-          {exploreNav.map((item) => (
+          {workspaceNav.map((item) => (
             <MobileNavLink key={item.href} item={item} active={isActive(item.href)} onNavigate={close} />
           ))}
           <div role="separator" className="mx-3 my-2 border-t border-border/60" />

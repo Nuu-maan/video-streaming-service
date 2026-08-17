@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { routes } from "@/config/routes";
+import { QualityLadder } from "@/features/studio/components/quality-ladder";
 import { StudioVideoActions } from "@/features/studio/components/studio-video-actions";
 import { VisibilityBadge } from "@/features/studio/components/visibility-badge";
 import type { StudioVideoRow as Row } from "@/features/studio/types";
@@ -73,22 +74,35 @@ export function StudioVideoRow({ video }: StudioVideoRowProps) {
         </div>
       </TableCell>
 
-      <TableCell>
-        {watchable ? (
-          <Badge variant="secondary">Ready</Badge>
-        ) : (
-          /* Live: polls while the worker is still transcoding, and refreshes
-             the page once it finishes, so the row becomes watchable without
-             anyone reaching for F5. */
-          <ProcessingPoller
-            videoId={video.id}
+      {/*
+       * Status is the ladder, not a word. A finished video still shows which
+       * renditions exist — a source that only ever yielded 360p is a fact worth
+       * knowing long after "Ready" stopped being interesting.
+       */}
+      <TableCell className="min-w-40">
+        <div className="flex flex-col gap-1.5">
+          {watchable ? <Badge variant="secondary">Ready</Badge> : null}
+
+          <QualityLadder
             status={video.status}
+            available={video.availableQualities}
             progress={video.transcodingProgress}
-            /* Named: several rows can be transcoding at once, and five anonymous
-               "processing, 50 percent" announcements tell a listener nothing. */
-            title={video.title}
           />
-        )}
+
+          {!watchable ? (
+            /* Live: polls while the worker is still transcoding, and refreshes
+               the page once it finishes, so the row becomes watchable without
+               anyone reaching for F5. */
+            <ProcessingPoller
+              videoId={video.id}
+              status={video.status}
+              progress={video.transcodingProgress}
+              /* Named: several rows can be transcoding at once, and five anonymous
+                 "processing, 50 percent" announcements tell a listener nothing. */
+              title={video.title}
+            />
+          ) : null}
+        </div>
       </TableCell>
 
       <TableCell>

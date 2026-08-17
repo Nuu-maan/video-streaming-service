@@ -46,7 +46,7 @@ export function RemoveFromPlaylistButton({
       size="icon"
       disabled={pending}
       onClick={handle}
-      aria-label={`Remove ${videoTitle} from this playlist`}
+      aria-label={`Remove ${videoTitle} from this collection`}
       className="size-8 shrink-0 rounded-full text-muted-foreground opacity-0 transition-opacity duration-(--motion-fast) group-hover/row:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
     >
       {pending ? (

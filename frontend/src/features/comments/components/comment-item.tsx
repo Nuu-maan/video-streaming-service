@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { createComment, deleteComment, fetchReplies, updateComment } from "@/features/comments/actions";
 import { CommentForm } from "@/features/comments/components/comment-form";
 import { CommentMenu } from "@/features/comments/components/comment-menu";
+import { NoteTimestamp } from "@/features/comments/components/note-timestamp";
 import type { CommentViewer } from "@/features/comments/types";
 import { ReportDialog } from "@/features/reports/components/report-dialog";
 import { useSignInPrompt } from "@/hooks/use-sign-in-prompt";
@@ -29,7 +30,11 @@ interface CommentItemProps {
    * list lives, so the parent hands its own submit handler down.
    */
   isReply?: boolean;
-  onReply?: (content: string) => Promise<boolean>;
+  onReply?: (content: string, videoTimestamp?: number) => Promise<boolean>;
+  /** Jump the player to a note's anchor. Absent where there is no player. */
+  onSeek?: (seconds: number) => void;
+  /** Reads the playhead, so a reply can be anchored too. */
+  captureTime?: () => number | null;
 }
 
 /** A stand-in with a temporary id, swapped for the server's row when it lands. */
@@ -38,6 +43,7 @@ export function draftComment(
   viewer: CommentViewer,
   content: string,
   parentId?: string,
+  videoTimestamp?: number,
 ): Comment {
   const now = new Date().toISOString();
   return {
@@ -51,6 +57,7 @@ export function draftComment(
     pinned: false,
     created_at: now,
     updated_at: now,
+    video_timestamp: videoTimestamp,
     username: viewer.username,
     avatar_url: viewer.avatarUrl,
   };
@@ -67,6 +74,8 @@ export function CommentItem({
   onChange,
   isReply = false,
   onReply,
+  onSeek,
+  captureTime,
 }: CommentItemProps) {
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
@@ -132,12 +141,12 @@ export function CommentItem({
   }
 
   /** Posting a reply to *this* comment. Only depth-0 items own this. */
-  async function submitReply(content: string): Promise<boolean> {
+  async function submitReply(content: string, videoTimestamp?: number): Promise<boolean> {
     if (!viewer) return false;
 
-    addOptimisticReply(draftComment(videoId, viewer, content, comment.id));
+    addOptimisticReply(draftComment(videoId, viewer, content, comment.id, videoTimestamp));
 
-    const result = await createComment(videoId, content, comment.id);
+    const result = await createComment(videoId, content, comment.id, videoTimestamp);
     if (!result.ok) {
       toast.error(result.message);
       return false;
@@ -188,6 +197,13 @@ export function CommentItem({
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              {/* The anchor leads the row. It is the first thing worth knowing
+                  about a note — which moment it is about — and burying it after
+                  the author and the date would make the column of timestamps
+                  impossible to scan, which is the entire point of having them. */}
+              {comment.video_timestamp !== undefined && comment.video_timestamp !== null ? (
+                <NoteTimestamp seconds={comment.video_timestamp} onSeek={onSeek} />
+              ) : null}
               {comment.pinned ? (
                 <span
                   title="Pinned by the creator"
@@ -256,7 +272,7 @@ export function CommentItem({
         <ConfirmDialog
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
-          title="Delete this comment?"
+          title="Delete this note?"
           description="It will be removed from the thread. This cannot be undone."
           confirmLabel="Delete"
           destructive
@@ -319,8 +335,9 @@ export function CommentItem({
             placeholder={`Reply to ${author}…`}
             submitLabel="Reply"
             initialValue={isReply ? `@${author} ` : ""}
-            onSubmit={async (content) => {
-              const posted = await handleReply(content);
+            captureTime={captureTime}
+            onSubmit={async (content, videoTimestamp) => {
+              const posted = await handleReply(content, videoTimestamp);
               if (posted) setReplying(false);
               return posted;
             }}
@@ -346,6 +363,8 @@ export function CommentItem({
                 videoId={videoId}
                 onChange={(next) => updateReply(reply.id, next)}
                 onReply={submitReply}
+                onSeek={onSeek}
+                captureTime={captureTime}
                 isReply
               />
             ))}

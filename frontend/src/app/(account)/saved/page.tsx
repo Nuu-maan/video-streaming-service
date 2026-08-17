@@ -13,14 +13,14 @@ import { listWatchLater } from "@/features/watch-later/api";
 import { WatchLaterGrid } from "@/features/watch-later/components/watch-later-grid";
 import { isApiError } from "@/lib/api-error";
 
-export const metadata: Metadata = { title: "Watch later" };
+export const metadata: Metadata = { title: "Saved" };
 
 function toPage(value: string | string[] | undefined): number {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
-export default async function WatchLaterPage(props: PageProps<"/watch-later">) {
+export default async function WatchLaterPage(props: PageProps<"/saved">) {
   const searchParams = await props.searchParams;
   const page = toPage(searchParams.page);
 
@@ -32,8 +32,8 @@ export default async function WatchLaterPage(props: PageProps<"/watch-later">) {
   return (
     <>
       <PageHeader
-        title="Watch later"
-        description="Videos you saved for a quieter moment. Most recently saved first."
+        title="Saved"
+        description="Videos you set aside to come back to. Most recently saved first."
       />
 
       {result === "rate-limited" ? (
@@ -47,10 +47,10 @@ export default async function WatchLaterPage(props: PageProps<"/watch-later">) {
         <EmptyState
           icon={Clock}
           title="Nothing saved yet"
-          description="Hit Save on any video and it lands here, ready for when you have the time."
+          description="Hit Save on any video and it lands here, ready for when you get to it."
           action={
             <Button asChild size="sm" variant="secondary">
-              <Link href={routes.home}>Browse videos</Link>
+              <Link href={routes.videos}>Browse videos</Link>
             </Button>
           }
         />

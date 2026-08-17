@@ -39,7 +39,7 @@ interface ReportDialogProps {
 
 const targetNoun: Record<ReportTarget["kind"], string> = {
   video: "video",
-  comment: "comment",
+  comment: "note",
   user: "channel",
 };
 

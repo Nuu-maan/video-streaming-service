@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, EllipsisVertical, ExternalLink, Trash2 } from "lucide-react";
+import { ChartLine, Check, Copy, EllipsisVertical, ExternalLink, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -72,6 +72,15 @@ export function StudioVideoActions({ video }: StudioVideoActionsProps) {
             <Link href={routes.video(video.id)}>
               <ExternalLink aria-hidden />
               View
+            </Link>
+          </DropdownMenuItem>
+          {/* Your own numbers, on a route that resolves ownership rather than
+              demanding the view_analytics permission an ordinary account has no
+              way to hold. */}
+          <DropdownMenuItem asChild>
+            <Link href={routes.videoInsights(video.id)}>
+              <ChartLine aria-hidden />
+              Insights
             </Link>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={copyLink}>

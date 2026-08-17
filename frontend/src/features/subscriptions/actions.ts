@@ -43,7 +43,7 @@ export async function subscribe(userId: string): Promise<SubscribeResult> {
   } catch (error) {
     return fail(error);
   }
-  revalidatePath(routes.subscriptions);
+  revalidatePath(routes.people);
   return { ok: true, subscribed: true };
 }
 
@@ -54,7 +54,7 @@ export async function unsubscribe(userId: string): Promise<SubscribeResult> {
     // Not subscribed is a 404 — and it is exactly where we were headed.
     if (!(isApiError(error) && error.isNotFound)) return fail(error);
   }
-  revalidatePath(routes.subscriptions);
+  revalidatePath(routes.people);
   return { ok: true, subscribed: false };
 }
 

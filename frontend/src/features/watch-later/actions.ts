@@ -27,7 +27,7 @@ export async function addToWatchLater(videoId: string): Promise<WatchLaterResult
   } catch (error) {
     return fail(error);
   }
-  revalidatePath(routes.watchLater);
+  revalidatePath(routes.saved);
   return { ok: true, saved: true };
 }
 
@@ -38,7 +38,7 @@ export async function removeFromWatchLater(videoId: string): Promise<WatchLaterR
     // Already gone is the state we were aiming for.
     if (!(isApiError(error) && error.isNotFound)) return fail(error);
   }
-  revalidatePath(routes.watchLater);
+  revalidatePath(routes.saved);
   return { ok: true, saved: false };
 }
 

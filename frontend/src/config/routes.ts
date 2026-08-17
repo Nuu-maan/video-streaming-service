@@ -1,13 +1,22 @@
 /**
  * Every internal path, in one place. A route that exists as a string literal
  * scattered across forty files is a route nobody can safely rename.
+ *
+ * A note on vocabulary: the UI calls a playlist a "collection" and a comment a
+ * "note", and these paths follow the UI. The API keeps its own words — the
+ * request still goes to `/playlists` and `/comments` — because the OpenAPI spec
+ * is a published contract and renaming a field to suit a frontend is not a
+ * frontend's business. The translation happens here and in the display copy;
+ * nowhere else.
  */
 export const routes = {
   home: "/",
   videos: "/videos",
   video: (id: string) => `/videos/${id}`,
   search: "/search",
-  trending: "/trending",
+  // Search survives the reframe — finding a video you know exists is not the
+  // same thing as being fed one you didn't ask for — and category is a filter
+  // on it, not a browse destination of its own.
   category: (name: string) => `/search?category=${encodeURIComponent(name)}`,
 
   login: "/login",
@@ -18,12 +27,13 @@ export const routes = {
 
   studio: "/studio",
   upload: "/studio/upload",
+  videoInsights: (id: string) => `/studio/videos/${id}`,
 
   history: "/history",
-  watchLater: "/watch-later",
-  playlists: "/playlists",
-  playlist: (id: string) => `/playlists/${id}`,
-  subscriptions: "/subscriptions",
+  saved: "/saved",
+  collections: "/collections",
+  collection: (id: string) => `/collections/${id}`,
+  people: "/people",
   notifications: "/notifications",
   settings: "/settings",
 
@@ -43,9 +53,9 @@ export const routes = {
 export const protectedPaths = [
   "/studio",
   "/history",
-  "/watch-later",
-  "/playlists",
-  "/subscriptions",
+  "/saved",
+  "/collections",
+  "/people",
   "/notifications",
   "/settings",
   "/admin",

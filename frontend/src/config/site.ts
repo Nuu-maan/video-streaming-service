@@ -2,7 +2,7 @@ import { env } from "@/config/env";
 
 export const site = {
   name: "Reel",
-  description: "Upload, transcode, and stream video with adaptive bitrate HLS.",
+  description: "A workspace for video: upload it, watch it transcode, and review it together.",
   url: env.NEXT_PUBLIC_SITE_URL,
 } as const;
 

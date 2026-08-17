@@ -1,7 +1,6 @@
 import { SearchX, Telescope } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Suspense } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -13,7 +12,6 @@ import { CategoryChips } from "@/features/search/components/category-chips";
 import { SearchFilters } from "@/features/search/components/search-filters";
 import { SearchInput } from "@/features/search/components/search-input";
 import { SearchResults } from "@/features/search/components/search-results";
-import { TrendingRail, TrendingRailSkeleton } from "@/features/search/components/trending-rail";
 import { isSearchSort, type SearchQuery } from "@/features/search/types";
 import { isApiError } from "@/lib/api-error";
 import { formatCompact } from "@/lib/format";
@@ -90,20 +88,20 @@ export default async function SearchPage(props: PageProps<"/search">) {
           <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground ring-1 ring-border/60 ring-inset">
             <Telescope aria-hidden className="size-6" />
           </div>
-          <h1 className="text-title text-balance">Find something to watch</h1>
+          <h1 className="text-title text-balance">Find a video</h1>
           <p className="mt-2 text-sm text-pretty text-muted-foreground">
-            Search across every public video — by title, description or tag.
+            Search by title, description or tag.
           </p>
           <SearchInput autoFocus className="mt-6 text-left" />
         </div>
 
+        {/*
+         * Categories, and nothing else. A "trending this week" rail used to sit
+         * below this — it was the last ranked shelf in the app, and an empty
+         * search box is exactly the moment a workspace should not start
+         * suggesting what other people are watching.
+         */}
         <CategoryChips categories={categories} className="mt-12" />
-
-        {/* The rail is a secondary read — streaming it keeps the search field
-            interactive while trending is still in flight. */}
-        <Suspense fallback={<TrendingRailSkeleton className="mt-8" />}>
-          <TrendingRail window="7d" title="Trending this week" className="mt-8" />
-        </Suspense>
       </div>
     );
   }

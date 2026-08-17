@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-import { exploreNav, libraryNav, type NavItem } from "@/components/layout/nav-items";
+import { libraryNav, workspaceNav, type NavItem } from "@/components/layout/nav-items";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -78,7 +78,7 @@ export function SiteSidebar({ className }: { className?: string }) {
         )}
       >
         <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 overflow-y-auto py-3">
-          {exploreNav.map((item) => (
+          {workspaceNav.map((item) => (
             <SidebarLink key={item.href} item={item} active={isActive(item.href)} collapsed={collapsed} />
           ))}
           <div role="separator" className={cn("my-2 border-t border-border/60", collapsed ? "mx-1" : "mx-3")} />

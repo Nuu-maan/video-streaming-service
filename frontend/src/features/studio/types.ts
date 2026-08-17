@@ -18,6 +18,12 @@ export interface StudioVideoRow {
   visibility: VideoVisibility;
   /** 0–100. Meaningful only while `status` is "processing". */
   transcodingProgress: number;
+  /**
+   * The renditions the worker has finished, e.g. ["360p", "480p"]. Grows one
+   * entry at a time during a transcode, which is what makes the ladder legible
+   * rather than a spinner.
+   */
+  availableQualities: string[];
   /** Seconds. Zero until the transcode has probed the file. */
   duration: number;
   viewCount: number;

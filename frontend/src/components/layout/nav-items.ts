@@ -1,10 +1,10 @@
 import {
-  Clock,
-  Flame,
+  Bookmark,
   History,
-  Home,
-  ListVideo,
+  Library,
+  LayoutGrid,
   UsersRound,
+  Video,
   type LucideIcon,
 } from "lucide-react";
 
@@ -17,18 +17,22 @@ export interface NavItem {
 }
 
 /**
- * The primary navigation, declared once so the desktop sidebar and the mobile
- * sheet can never drift apart. Split into "explore" (anonymous-friendly) and
- * "library" (session-backed — the proxy bounces signed-out visitors to login).
+ * The primary navigation, declared once so the desktop rail and the mobile
+ * sheet can never drift apart.
+ *
+ * There is no "Explore" group and no Trending entry. This is a workspace: the
+ * things in it are things somebody put there, and every destination below is a
+ * finite list with an end. A ranked shelf of what strangers are watching would
+ * be the one screen here that nobody owns.
  */
-export const exploreNav: NavItem[] = [
-  { label: "Home", href: routes.home, icon: Home },
-  { label: "Trending", href: routes.trending, icon: Flame },
+export const workspaceNav: NavItem[] = [
+  { label: "Overview", href: routes.home, icon: LayoutGrid },
+  { label: "All videos", href: routes.videos, icon: Video },
+  { label: "Collections", href: routes.collections, icon: Library },
 ];
 
 export const libraryNav: NavItem[] = [
-  { label: "Subscriptions", href: routes.subscriptions, icon: UsersRound },
+  { label: "Saved", href: routes.saved, icon: Bookmark },
   { label: "History", href: routes.history, icon: History },
-  { label: "Watch Later", href: routes.watchLater, icon: Clock },
-  { label: "Playlists", href: routes.playlists, icon: ListVideo },
+  { label: "People", href: routes.people, icon: UsersRound },
 ];

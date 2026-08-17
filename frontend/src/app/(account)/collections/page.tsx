@@ -11,14 +11,14 @@ import { PlaylistCard } from "@/features/playlists/components/playlist-card";
 import { PlaylistFormDialog } from "@/features/playlists/components/playlist-form-dialog";
 import { isApiError } from "@/lib/api-error";
 
-export const metadata: Metadata = { title: "Playlists" };
+export const metadata: Metadata = { title: "Collections" };
 
 function toPage(value: string | string[] | undefined): number {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
-export default async function PlaylistsPage(props: PageProps<"/playlists">) {
+export default async function PlaylistsPage(props: PageProps<"/collections">) {
   const searchParams = await props.searchParams;
   const page = toPage(searchParams.page);
 
@@ -32,7 +32,7 @@ export default async function PlaylistsPage(props: PageProps<"/playlists">) {
       trigger={
         <Button size="sm">
           <Plus aria-hidden />
-          New playlist
+          New collection
         </Button>
       }
     />
@@ -41,8 +41,8 @@ export default async function PlaylistsPage(props: PageProps<"/playlists">) {
   return (
     <>
       <PageHeader
-        title="Playlists"
-        description="Collections you have made. Private ones are only ever visible to you."
+        title="Collections"
+        description="Videos you have grouped together. Private collections are only ever visible to you."
         actions={newPlaylistButton}
       />
 
@@ -53,14 +53,14 @@ export default async function PlaylistsPage(props: PageProps<"/playlists">) {
         />
       ) : result === "failed" ? (
         <ErrorState
-          title="Your playlists didn't load"
+          title="Your collections didn't load"
           description="Refresh the page to try again."
         />
       ) : result.items.length === 0 ? (
         <EmptyState
           icon={ListVideo}
-          title="No playlists yet"
-          description="A playlist is a queue you keep: talks to catch up on, a series to binge, anything you want to come back to."
+          title="No collections yet"
+          description="A collection is a group of videos that belong together — a project, a shoot, a series of cuts."
           action={newPlaylistButton}
         />
       ) : (

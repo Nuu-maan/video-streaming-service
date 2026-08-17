@@ -45,13 +45,18 @@ export function proxy(request: NextRequest): NextResponse {
   return NextResponse.redirect(login);
 }
 
+/**
+ * Kept in step with `protectedPaths` by hand, because a matcher must be a static
+ * literal — Next reads it at build time and cannot evaluate an imported array.
+ * If you add a path there, add it here.
+ */
 export const config = {
   matcher: [
     "/studio/:path*",
     "/history/:path*",
-    "/watch-later/:path*",
-    "/playlists/:path*",
-    "/subscriptions/:path*",
+    "/saved/:path*",
+    "/collections/:path*",
+    "/people/:path*",
     "/notifications/:path*",
     "/settings/:path*",
     "/admin/:path*",

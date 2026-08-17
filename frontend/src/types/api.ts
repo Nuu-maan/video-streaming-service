@@ -572,6 +572,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/videos/{id}/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Video id */
+                id: components["parameters"]["VideoId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Engagement breakdown for a video you own
+         * @description The creator-facing twin of `/admin/analytics/videos/{id}`, returning the identical payload. Any authenticated caller may ask; the video's owner is answered, and so is anyone holding `view_analytics`. Everyone else gets `404`, never `403` — a video you may not read must not be distinguishable from one that does not exist.
+         */
+        get: operations["getOwnVideoAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/videos/{id}/analytics/views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Video id */
+                id: components["parameters"]["VideoId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * View count time series for a video you own
+         * @description The creator-facing twin of `/admin/analytics/videos/{id}/views`. Same authorization rule as `/videos/{id}/analytics`.
+         */
+        get: operations["getOwnViewsTimeSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/videos/{id}/comments": {
         parameters: {
             query?: never;
@@ -587,7 +633,7 @@ export interface paths {
         put?: never;
         /**
          * Post a comment or a reply
-         * @description Set `parent_id` to reply; the parent must be a comment on the same video.
+         * @description Set `parent_id` to reply; the parent must be a comment on the same video. Set `video_timestamp` to anchor the comment to a moment in the video — omitting it means the comment is about the video as a whole, which is not the same as anchoring it to second zero.
          */
         post: operations["createComment"];
         delete?: never;
@@ -1670,6 +1716,8 @@ export interface components {
             updated_at: string;
             /** Format: date-time */
             deleted_at?: string;
+            /** @description Seconds from the start of the video this comment is anchored to. Absent when the comment is about the video as a whole; `0` means it is anchored to the first frame. */
+            video_timestamp?: number;
             username?: string;
             avatar_url?: string;
         };
@@ -3229,6 +3277,80 @@ export interface operations {
             };
         };
     };
+    getOwnVideoAnalytics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Video id */
+                id: components["parameters"]["VideoId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Video analytics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: components["schemas"]["VideoAnalytics"];
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Video not found, or not yours (`NOT_FOUND`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOwnViewsTimeSeries: {
+        parameters: {
+            query?: {
+                interval?: "hour" | "day" | "week" | "month";
+            };
+            header?: never;
+            path: {
+                /** @description Video id */
+                id: components["parameters"]["VideoId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Time series */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: components["schemas"]["TimeSeriesData"];
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Video not found, or not yours (`NOT_FOUND`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listComments: {
         parameters: {
             query?: {
@@ -3236,6 +3358,8 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Page size; clamped to at most 100 */
                 limit?: components["parameters"]["Limit"];
+                /** @description `newest` (default) orders by recency, the order a conversation reads in. `timestamp` orders by the moment in the video each comment is anchored to, the order a review reads in; comments with no anchor come after every anchored one. Pinned comments lead either way. */
+                sort?: "newest" | "timestamp";
             };
             header?: never;
             path: {
@@ -3277,6 +3401,8 @@ export interface operations {
                     content: string;
                     /** Format: uuid */
                     parent_id?: string;
+                    /** @description Seconds from the start of the video. Must not exceed the video's duration once it is known; while a video is still processing its duration is 0 and the bound is not applied. */
+                    video_timestamp?: number | null;
                 };
             };
         };

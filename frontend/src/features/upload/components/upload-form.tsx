@@ -165,6 +165,19 @@ export function UploadForm({ file, initialDetails, onSubmit, onChangeFile }: Upl
             );
           })}
         </div>
+
+        {/*
+         * Said plainly, and said here, because here is the only place it can be
+         * acted on. The API has no endpoint for editing a video after upload —
+         * there is no PATCH /videos/:id — so title, description and visibility
+         * are fixed at this moment. Letting someone discover that later, from a
+         * share dialog with no control in it, would be the worse version of
+         * this.
+         */}
+        <p className="mt-3 text-xs text-muted-foreground">
+          This cannot be changed after uploading. To adjust it later you would have to delete the
+          video and upload it again.
+        </p>
       </fieldset>
 
       <div className="flex justify-end">
