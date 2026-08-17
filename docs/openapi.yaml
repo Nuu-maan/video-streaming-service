@@ -1148,6 +1148,88 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # ─────────────────────── Creator-facing analytics ───────────────────────
+
+  /videos/{id}/analytics:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Videos]
+      operationId: getOwnVideoAnalytics
+      summary: Engagement breakdown for a video you own
+      description: >-
+        The creator-facing twin of `/admin/analytics/videos/{id}`, returning the
+        identical payload. Any authenticated caller may ask; the video's owner
+        is answered, and so is anyone holding `view_analytics`. Everyone else
+        gets `404`, never `403` — a video you may not read must not be
+        distinguishable from one that does not exist.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Video analytics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/VideoAnalytics"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Video not found, or not yours (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /videos/{id}/analytics/views:
+    parameters:
+      - $ref: "#/components/parameters/VideoId"
+    get:
+      tags: [Videos]
+      operationId: getOwnViewsTimeSeries
+      summary: View count time series for a video you own
+      description: >-
+        The creator-facing twin of `/admin/analytics/videos/{id}/views`. Same
+        authorization rule as `/videos/{id}/analytics`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, week, month]
+            default: hour
+      responses:
+        "200":
+          description: Time series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TimeSeriesData"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Video not found, or not yours (`NOT_FOUND`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ─────────────────────────── Social: comments ───────────────────────────
 
   /videos/{id}/comments:
@@ -1161,6 +1243,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/Limit"
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            `newest` (default) orders by recency, the order a conversation
+            reads in. `timestamp` orders by the moment in the video each
+            comment is anchored to, the order a review reads in; comments with
+            no anchor come after every anchored one. Pinned comments lead
+            either way.
+          schema:
+            type: string
+            enum: [newest, timestamp]
+            default: newest
       responses:
         "200":
           description: Page of comments
@@ -1185,7 +1280,9 @@ paths:
       summary: Post a comment or a reply
       description: >-
         Set `parent_id` to reply; the parent must be a comment on the same
-        video.
+        video. Set `video_timestamp` to anchor the comment to a moment in the
+        video — omitting it means the comment is about the video as a whole,
+        which is not the same as anchoring it to second zero.
       security:
         - bearerAuth: []
       requestBody:
@@ -1203,6 +1300,14 @@ paths:
                 parent_id:
                   type: string
                   format: uuid
+                video_timestamp:
+                  type: integer
+                  minimum: 0
+                  nullable: true
+                  description: >-
+                    Seconds from the start of the video. Must not exceed the
+                    video's duration once it is known; while a video is still
+                    processing its duration is 0 and the bound is not applied.
       responses:
         "201":
           description: The created comment
@@ -3366,6 +3471,13 @@ components:
         deleted_at:
           type: string
           format: date-time
+        video_timestamp:
+          type: integer
+          minimum: 0
+          description: >-
+            Seconds from the start of the video this comment is anchored to.
+            Absent when the comment is about the video as a whole; `0` means it
+            is anchored to the first frame.
         username:
           type: string
         avatar_url:
