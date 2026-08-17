@@ -21,7 +21,8 @@ import (
 const commentColumns = `
 	c.id, c.video_id, c.user_id, c.parent_id, c.content, c.like_count,
 	c.reply_count, c.pinned, c.edited_at, c.created_at, c.updated_at,
-	c.deleted_at, u.username, COALESCE(u.oauth_avatar_url, u.avatar_url, '')`
+	c.deleted_at, c.video_timestamp, u.username,
+	COALESCE(u.oauth_avatar_url, u.avatar_url, '')`
 
 const notificationColumns = `
 	id, user_id, type, title, COALESCE(message, ''), action_url, actor_id,
@@ -57,6 +58,7 @@ func scanComment(row scanner) (*domain.Comment, error) {
 		&c.CreatedAt,
 		&c.UpdatedAt,
 		&c.DeletedAt,
+		&c.VideoTimestamp,
 		&c.Username,
 		&c.AvatarURL,
 	)
@@ -138,12 +140,12 @@ func (r *SocialRepository) GetLike(ctx context.Context, userID, videoID uuid.UUI
 
 func (r *SocialRepository) CreateComment(ctx context.Context, comment *domain.Comment) error {
 	query := `
-	INSERT INTO comments (id, video_id, user_id, parent_id, content, created_at, updated_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	INSERT INTO comments (id, video_id, user_id, parent_id, content, video_timestamp, created_at, updated_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err := r.pool.Exec(ctx, query,
 		comment.ID, comment.VideoID, comment.UserID, comment.ParentID,
-		comment.Content, comment.CreatedAt, comment.UpdatedAt,
+		comment.Content, comment.VideoTimestamp, comment.CreatedAt, comment.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("creating comment: %w", err)
@@ -167,11 +169,26 @@ func (r *SocialRepository) GetCommentByID(ctx context.Context, id uuid.UUID) (*d
 	return comment, nil
 }
 
-func (r *SocialRepository) ListComments(ctx context.Context, videoID uuid.UUID, page repository.Page) ([]*domain.Comment, error) {
+// ListComments returns a page of a video's top-level comments. Pinned always
+// wins, whichever ordering is asked for.
+//
+// The sort is chosen from a closed set rather than interpolated from the
+// caller's string: this is the one place in the file where a query fragment is
+// selected at runtime, and a switch keeps it impossible for a request to reach
+// the SQL. An unrecognised value orders by newest rather than erroring — the
+// handler has already rejected anything invalid, so this is a backstop.
+func (r *SocialRepository) ListComments(ctx context.Context, videoID uuid.UUID, sort domain.CommentSort, page repository.Page) ([]*domain.Comment, error) {
+	order := `c.pinned DESC, c.created_at DESC`
+	if sort == domain.CommentSortTimestamp {
+		// NULLS LAST puts comments about the video as a whole after every
+		// comment anchored to a moment in it, instead of ahead of all of them.
+		order = `c.pinned DESC, c.video_timestamp ASC NULLS LAST, c.created_at ASC`
+	}
+
 	query := `SELECT` + commentColumns + `
 	FROM comments c JOIN users u ON u.id = c.user_id
 	WHERE c.video_id = $1 AND c.parent_id IS NULL AND c.deleted_at IS NULL
-	ORDER BY c.pinned DESC, c.created_at DESC
+	ORDER BY ` + order + `
 	LIMIT $2 OFFSET $3`
 
 	return r.listComments(ctx, query, videoID, page)

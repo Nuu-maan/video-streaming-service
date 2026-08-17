@@ -59,6 +59,13 @@ type Comment struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 
+	// VideoTimestamp anchors the comment to a moment in the video, in seconds
+	// from the start. Nil means the comment is about the video as a whole —
+	// which is not the same as second zero, so this is a pointer rather than an
+	// int defaulting to 0. A reply may carry one too: a thread can legitimately
+	// move on to a different moment.
+	VideoTimestamp *int `json:"video_timestamp,omitempty"`
+
 	Username  string `json:"username,omitempty"`
 	AvatarURL string `json:"avatar_url,omitempty"`
 }
@@ -76,7 +83,32 @@ func (c *Comment) Validate() error {
 	if len(c.Content) > 10000 {
 		return ErrInvalidInput
 	}
+	// The upper bound is the video's duration, which this type does not know.
+	// The service checks it where the video is already loaded.
+	if c.VideoTimestamp != nil && *c.VideoTimestamp < 0 {
+		return ErrInvalidInput
+	}
 	return nil
+}
+
+// CommentSort names the orderings the comment listing supports.
+type CommentSort string
+
+const (
+	// CommentSortNewest is the conversational order: most recent first.
+	CommentSortNewest CommentSort = "newest"
+	// CommentSortTimestamp is the review order: earliest moment in the video
+	// first, with unanchored comments after every anchored one.
+	CommentSortTimestamp CommentSort = "timestamp"
+)
+
+func (s CommentSort) IsValid() bool {
+	switch s {
+	case CommentSortNewest, CommentSortTimestamp:
+		return true
+	default:
+		return false
+	}
 }
 
 type Playlist struct {
