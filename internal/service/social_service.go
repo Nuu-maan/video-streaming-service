@@ -22,7 +22,7 @@ type SocialRepository interface {
 
 	CreateComment(ctx context.Context, comment *domain.Comment) error
 	GetCommentByID(ctx context.Context, id uuid.UUID) (*domain.Comment, error)
-	ListComments(ctx context.Context, videoID uuid.UUID, page repository.Page) ([]*domain.Comment, error)
+	ListComments(ctx context.Context, videoID uuid.UUID, sort domain.CommentSort, page repository.Page) ([]*domain.Comment, error)
 	CountComments(ctx context.Context, videoID uuid.UUID) (int, error)
 	ListReplies(ctx context.Context, parentID uuid.UUID, page repository.Page) ([]*domain.Comment, error)
 	CountReplies(ctx context.Context, parentID uuid.UUID) (int, error)
@@ -124,12 +124,12 @@ func (s *SocialService) GetLike(ctx context.Context, userID, videoID uuid.UUID) 
 	return s.repo.GetLike(ctx, userID, videoID)
 }
 
-func (s *SocialService) ListComments(ctx context.Context, videoID uuid.UUID, page repository.Page) ([]*domain.Comment, int, error) {
+func (s *SocialService) ListComments(ctx context.Context, videoID uuid.UUID, sort domain.CommentSort, page repository.Page) ([]*domain.Comment, int, error) {
 	if _, err := s.videos.GetByID(ctx, videoID); err != nil {
 		return nil, 0, err
 	}
 
-	comments, err := s.repo.ListComments(ctx, videoID, page)
+	comments, err := s.repo.ListComments(ctx, videoID, sort, page)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -160,10 +160,20 @@ func (s *SocialService) ListReplies(ctx context.Context, parentID uuid.UUID, pag
 	return replies, total, nil
 }
 
-func (s *SocialService) CreateComment(ctx context.Context, userID, videoID uuid.UUID, parentID *uuid.UUID, content string) (*domain.Comment, error) {
+// CreateComment posts a comment, optionally anchored to videoTimestamp seconds
+// into the video.
+func (s *SocialService) CreateComment(ctx context.Context, userID, videoID uuid.UUID, parentID *uuid.UUID, content string, videoTimestamp *int) (*domain.Comment, error) {
 	video, err := s.videos.GetByID(ctx, videoID)
 	if err != nil {
 		return nil, err
+	}
+
+	// The video is already loaded here, so this is the only layer that can
+	// bound the anchor. Duration is 0 until the worker has probed the file, and
+	// a comment on a still-processing video should not be refused for failing a
+	// check against a duration nobody knows yet.
+	if videoTimestamp != nil && video.Duration > 0 && *videoTimestamp > video.Duration {
+		return nil, fmt.Errorf("%w: video_timestamp is past the end of the video", domain.ErrInvalidInput)
 	}
 
 	var parent *domain.Comment
@@ -182,13 +192,14 @@ func (s *SocialService) CreateComment(ctx context.Context, userID, videoID uuid.
 
 	now := time.Now()
 	comment := &domain.Comment{
-		ID:        uuid.New(),
-		VideoID:   videoID,
-		UserID:    userID,
-		ParentID:  parentID,
-		Content:   content,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             uuid.New(),
+		VideoID:        videoID,
+		UserID:         userID,
+		ParentID:       parentID,
+		Content:        content,
+		VideoTimestamp: videoTimestamp,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := comment.Validate(); err != nil {
 		return nil, err

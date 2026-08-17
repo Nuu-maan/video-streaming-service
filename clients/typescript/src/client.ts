@@ -15,6 +15,7 @@ import type {
   BanUserRequest,
   CategoryCount,
   Comment,
+  CommentSort,
   ContentReport,
   CreateCommentRequest,
   CreatePlaylistRequest,
@@ -492,6 +493,22 @@ export function createClient(options: ClientOptions) {
       delete(id: string): Promise<MessageResponse> {
         return request<MessageResponse>("DELETE", `/videos/${id}`);
       },
+      /**
+       * GET /videos/:id/analytics — your own video's numbers.
+       *
+       * The creator-facing twin of admin.analytics.video(), returning the same
+       * payload without requiring view_analytics. A video that is not yours
+       * 404s rather than 403s.
+       */
+      analytics(id: string): Promise<VideoAnalytics> {
+        return request<VideoAnalytics>("GET", `/videos/${id}/analytics`);
+      },
+      /** GET /videos/:id/analytics/views — your own video's view time series. */
+      views(id: string, interval: TimeSeriesInterval = "hour"): Promise<TimeSeriesData> {
+        return request<TimeSeriesData>("GET", `/videos/${id}/analytics/views`, {
+          query: { interval },
+        });
+      },
     },
 
     // -----------------------------------------------------------------------
@@ -509,8 +526,14 @@ export function createClient(options: ClientOptions) {
         return request("DELETE", `/videos/${videoId}/like`);
       },
 
-      /** GET /videos/:id/comments — top-level comments, pinned first. */
-      comments(videoId: string, params: PageParams = {}): Promise<Page<Comment>> {
+      /**
+       * GET /videos/:id/comments — top-level comments, pinned first.
+       *
+       * `sort: "timestamp"` orders by the moment in the video each comment is
+       * anchored to, which is the order a review reads in; the default orders
+       * by recency, which is the order a conversation reads in.
+       */
+      comments(videoId: string, params: PageParams & { sort?: CommentSort } = {}): Promise<Page<Comment>> {
         return requestPage<Comment>("GET", `/videos/${videoId}/comments`, { query: { ...params } });
       },
       /** POST /videos/:id/comments — comment, or reply when parent_id is set. */

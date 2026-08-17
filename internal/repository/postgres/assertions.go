@@ -17,10 +17,11 @@ import (
 // one way: postgres imports service, service imports repository. Asserting from
 // the service side would require service to import postgres and close the cycle.
 var (
-	_ service.ModerationRepository  = (*ReportRepository)(nil)
-	_ service.VideoRepository       = (*PostgresVideoRepository)(nil)
-	_ service.UserRepository        = (*UserRepository)(nil)
-	_ service.AuditLogRepository    = (*AuditLogRepository)(nil)
-	_ service.AnalyticsRepository   = (*AnalyticsRepository)(nil)
-	_ service.ViewTrackerRepository = (*AnalyticsRepository)(nil)
+	_ service.ModerationRepository     = (*ReportRepository)(nil)
+	_ service.VideoRepository          = (*PostgresVideoRepository)(nil)
+	_ service.UserRepository           = (*UserRepository)(nil)
+	_ service.AuditLogRepository       = (*AuditLogRepository)(nil)
+	_ service.AnalyticsRepository      = (*AnalyticsRepository)(nil)
+	_ service.AnalyticsVideoRepository = (*PostgresVideoRepository)(nil)
+	_ service.ViewTrackerRepository    = (*AnalyticsRepository)(nil)
 )

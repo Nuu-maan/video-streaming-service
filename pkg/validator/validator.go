@@ -7,17 +7,19 @@ import (
 	"mime/multipart"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ErrFileTooLarge      = fmt.Errorf("file size exceeds maximum allowed size")
-	ErrInvalidFormat     = fmt.Errorf("invalid file format")
-	ErrInvalidTitle      = fmt.Errorf("invalid title")
-	ErrCorruptVideo      = fmt.Errorf("corrupt or invalid video file")
-	ErrInvalidUUID       = fmt.Errorf("invalid UUID format")
-	ErrInvalidPagination = fmt.Errorf("invalid pagination parameters")
+	ErrFileTooLarge       = fmt.Errorf("file size exceeds maximum allowed size")
+	ErrInvalidFormat      = fmt.Errorf("invalid file format")
+	ErrInvalidTitle       = fmt.Errorf("invalid title")
+	ErrCorruptVideo       = fmt.Errorf("corrupt or invalid video file")
+	ErrInvalidUUID        = fmt.Errorf("invalid UUID format")
+	ErrInvalidPagination  = fmt.Errorf("invalid pagination parameters")
+	ErrInvalidDescription = fmt.Errorf("invalid description")
 )
 
 var allowedExtensions = map[string]bool{
@@ -93,22 +95,36 @@ func isVideoFile(buf []byte) bool {
 	return false
 }
 
+// Text arriving over HTTP is a byte string, not a Go string in any meaningful
+// sense: nothing has checked that it is valid UTF-8. Postgres does check, and
+// refuses the insert with SQLSTATE 22021 ("invalid byte sequence for encoding
+// UTF8"), which surfaced to the client as a 500 — an internal error for what is
+// plainly bad input. A form submitted in Windows-1252 is enough to trigger it: a
+// single em dash arrives as the byte 0x97, which is not valid UTF-8.
+//
+// Length is counted in runes, not bytes. `len(s)` counts bytes, so a title in
+// Japanese — three bytes per character — was refused at around 85 characters
+// even though the column holds 255. Postgres counts characters; so do we.
+func validateText(value string, maxRunes int, field string, sentinel error) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%w: %s must be valid UTF-8 text", sentinel, field)
+	}
+	if utf8.RuneCountInString(value) > maxRunes {
+		return fmt.Errorf("%w: %s cannot exceed %d characters", sentinel, field, maxRunes)
+	}
+	return nil
+}
+
 func ValidateTitle(title string) error {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return fmt.Errorf("%w: title cannot be empty", ErrInvalidTitle)
 	}
-	if len(title) > 255 {
-		return fmt.Errorf("%w: title cannot exceed 255 characters", ErrInvalidTitle)
-	}
-	return nil
+	return validateText(title, 255, "title", ErrInvalidTitle)
 }
 
 func ValidateDescription(description string) error {
-	if len(description) > 5000 {
-		return fmt.Errorf("description cannot exceed 5000 characters")
-	}
-	return nil
+	return validateText(description, 5000, "description", ErrInvalidDescription)
 }
 
 func ValidateUUID(id string) (uuid.UUID, error) {

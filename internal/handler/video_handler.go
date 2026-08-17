@@ -104,6 +104,7 @@ func (h *VideoHandler) respondUploadError(c *gin.Context, err error, filename st
 		errors.Is(err, validator.ErrCorruptVideo):
 		response.Error(c, http.StatusUnsupportedMediaType, "INVALID_FORMAT", err.Error())
 	case errors.Is(err, validator.ErrInvalidTitle), errors.Is(err, domain.ErrInvalidTitle),
+		errors.Is(err, validator.ErrInvalidDescription),
 		errors.Is(err, domain.ErrTitleTooLong), errors.Is(err, domain.ErrInvalidInput):
 		response.ValidationError(c, err.Error())
 	default:

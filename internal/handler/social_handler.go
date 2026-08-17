@@ -150,6 +150,10 @@ func (h *SocialHandler) GetLike(c *gin.Context) {
 }
 
 // ListComments returns a page of a video's top-level comments, pinned first.
+//
+// ?sort=timestamp orders by the moment in the video each comment is anchored
+// to, which is the order a review reads in; the default orders by recency,
+// which is the order a conversation reads in.
 func (h *SocialHandler) ListComments(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -159,7 +163,13 @@ func (h *SocialHandler) ListComments(c *gin.Context) {
 	}
 	page := parsePage(c)
 
-	comments, total, err := h.social.ListComments(ctx, videoID, page)
+	sort := domain.CommentSort(c.DefaultQuery("sort", string(domain.CommentSortNewest)))
+	if !sort.IsValid() {
+		response.ValidationError(c, "sort must be one of: newest, timestamp")
+		return
+	}
+
+	comments, total, err := h.social.ListComments(ctx, videoID, sort, page)
 	if err != nil {
 		if errors.Is(err, domain.ErrVideoNotFound) {
 			response.NotFound(c, "Video not found")
@@ -200,6 +210,11 @@ func (h *SocialHandler) ListReplies(c *gin.Context) {
 type createCommentRequest struct {
 	Content  string `json:"content" binding:"required"`
 	ParentID string `json:"parent_id"`
+	// VideoTimestamp anchors the comment to a moment in the video, in seconds.
+	// A pointer so that omitting it and anchoring to second zero stay
+	// distinguishable — the first is "about the video", the second is "about
+	// the first frame".
+	VideoTimestamp *int `json:"video_timestamp"`
 }
 
 // CreateComment posts a comment on a video, or a reply when parent_id is set.
@@ -226,7 +241,15 @@ func (h *SocialHandler) CreateComment(c *gin.Context) {
 		return
 	}
 
-	comment, err := h.social.CreateComment(ctx, principal.UserID, videoID, parentID, strings.TrimSpace(req.Content))
+	// Rejected here rather than in the service so the message can name the
+	// field. The service still bounds it against the video's duration, which
+	// this layer has no way to know.
+	if req.VideoTimestamp != nil && *req.VideoTimestamp < 0 {
+		response.ValidationError(c, "video_timestamp must not be negative")
+		return
+	}
+
+	comment, err := h.social.CreateComment(ctx, principal.UserID, videoID, parentID, strings.TrimSpace(req.Content), req.VideoTimestamp)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrVideoNotFound):
@@ -234,7 +257,7 @@ func (h *SocialHandler) CreateComment(c *gin.Context) {
 		case errors.Is(err, domain.ErrCommentNotFound):
 			response.NotFound(c, "Parent comment not found")
 		case errors.Is(err, domain.ErrInvalidInput):
-			response.ValidationError(c, "content must be 1-10000 characters and any parent comment must be on the same video")
+			response.ValidationError(c, "content must be 1-10000 characters, video_timestamp must fall within the video, and any parent comment must be on the same video")
 		default:
 			h.log.Error(ctx, "failed to create comment", err, map[string]interface{}{"video_id": videoID})
 			response.InternalError(c, "Failed to post comment")

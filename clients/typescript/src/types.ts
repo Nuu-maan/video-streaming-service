@@ -268,9 +268,18 @@ export interface Comment {
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  /**
+   * Seconds from the start of the video this comment is anchored to. Absent
+   * when the comment is about the video as a whole; `0` anchors it to the
+   * first frame, which is a different thing.
+   */
+  video_timestamp?: number;
   username?: string;
   avatar_url?: string;
 }
+
+/** Ordering for a video's top-level comment listing. Pinned leads either way. */
+export type CommentSort = "newest" | "timestamp";
 
 export interface SubscriptionEntry {
   user_id: string;
@@ -352,6 +361,12 @@ export interface CreateCommentRequest {
   content: string;
   /** Reply to another comment on the same video. */
   parent_id?: string;
+  /**
+   * Anchor the comment to a moment in the video, in seconds from the start.
+   * Omit for a comment about the video as a whole. Must not exceed the video's
+   * duration once it is known.
+   */
+  video_timestamp?: number;
 }
 
 export interface CreateReportRequest {

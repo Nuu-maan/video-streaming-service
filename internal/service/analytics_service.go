@@ -20,16 +20,44 @@ type AnalyticsRepository interface {
 	GetRealtimeMetrics(ctx context.Context) (*domain.RealtimeMetrics, error)
 }
 
-type AnalyticsService struct {
-	repo  AnalyticsRepository
-	redis *redis.Client
+// AnalyticsVideoRepository is the slice of the video store this service needs
+// to resolve who owns a video. Satisfied by *postgres.PostgresVideoRepository.
+type AnalyticsVideoRepository interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Video, error)
 }
 
-func NewAnalyticsService(repo AnalyticsRepository, redisClient *redis.Client) *AnalyticsService {
+type AnalyticsService struct {
+	repo   AnalyticsRepository
+	videos AnalyticsVideoRepository
+	redis  *redis.Client
+}
+
+func NewAnalyticsService(repo AnalyticsRepository, videos AnalyticsVideoRepository, redisClient *redis.Client) *AnalyticsService {
 	return &AnalyticsService{
-		repo:  repo,
-		redis: redisClient,
+		repo:   repo,
+		videos: videos,
+		redis:  redisClient,
 	}
+}
+
+// authorizeVideo decides who may read one video's analytics: its owner, or a
+// caller holding view_analytics (the admin surface). Everyone else is told the
+// video does not exist rather than that they may not see it, which is the rule
+// the rest of the API follows — a video you cannot see must not be
+// distinguishable from one that is not there.
+//
+// It runs before the cache is consulted, not after. The cache is keyed by video
+// alone, so checking afterwards would hand a cached payload to the first
+// unauthorised caller who asked.
+func (s *AnalyticsService) authorizeVideo(ctx context.Context, videoID, userID uuid.UUID, canViewAny bool) error {
+	video, err := s.videos.GetByID(ctx, videoID)
+	if err != nil {
+		return err
+	}
+	if canViewAny || video.IsOwnedBy(userID) {
+		return nil
+	}
+	return domain.ErrVideoNotFound
 }
 
 func (s *AnalyticsService) GetDashboardOverview(ctx context.Context) (*domain.DashboardStats, error) {
@@ -56,7 +84,11 @@ func (s *AnalyticsService) GetDashboardOverview(ctx context.Context) (*domain.Da
 	return stats, nil
 }
 
-func (s *AnalyticsService) GetVideoAnalytics(ctx context.Context, videoID, userID uuid.UUID) (*domain.VideoAnalytics, error) {
+func (s *AnalyticsService) GetVideoAnalytics(ctx context.Context, videoID, userID uuid.UUID, canViewAny bool) (*domain.VideoAnalytics, error) {
+	if err := s.authorizeVideo(ctx, videoID, userID, canViewAny); err != nil {
+		return nil, err
+	}
+
 	cacheKey := fmt.Sprintf("analytics:video:%s", videoID)
 
 	cached, err := s.redis.Get(ctx, cacheKey).Result()
@@ -128,7 +160,11 @@ func (s *AnalyticsService) GetTopVideosThisWeek(ctx context.Context, limit int) 
 	return videos, nil
 }
 
-func (s *AnalyticsService) GetViewsTimeSeries(ctx context.Context, videoID uuid.UUID, interval string) (*domain.TimeSeriesData, error) {
+func (s *AnalyticsService) GetViewsTimeSeries(ctx context.Context, videoID uuid.UUID, interval string, userID uuid.UUID, canViewAny bool) (*domain.TimeSeriesData, error) {
+	if err := s.authorizeVideo(ctx, videoID, userID, canViewAny); err != nil {
+		return nil, err
+	}
+
 	cacheKey := fmt.Sprintf("analytics:timeseries:%s:%s", videoID, interval)
 
 	cached, err := s.redis.Get(ctx, cacheKey).Result()

@@ -76,6 +76,8 @@ func TestHandlerRegistersVersionedAndAliasRoutes(t *testing.T) {
 		"POST /me/notifications/read-all",
 		"POST /me/notifications/:id/read",
 		"POST /me/change-password",
+		"GET /videos/:id/analytics",
+		"GET /videos/:id/analytics/views",
 		"POST /admin/users/:id/ban",
 	}
 	for _, want := range wanted {

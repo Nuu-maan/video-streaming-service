@@ -96,8 +96,21 @@ func (r *AnalyticsRepository) GetDashboardStats(ctx context.Context) (*domain.Da
 }
 
 func (r *AnalyticsRepository) GetVideoAnalytics(ctx context.Context, videoID uuid.UUID) (*domain.VideoAnalytics, error) {
+	// Engagement comes off the denormalised counters on videos, which migration
+	// 11's triggers maintain: like_count counts positive ratings only, and
+	// comment_count counts undeleted comments. They were missing from this
+	// SELECT entirely, so every video reported 0 likes and 0 comments however
+	// many it had — the numbers were simply never asked for.
+	//
+	// Dislikes have no counter column, so they are counted directly. It is a
+	// scalar subquery rather than another LEFT JOIN because joining likes here
+	// would multiply the video_views rows and silently inflate every aggregate
+	// above it.
+	//
+	// Shares stay 0: nothing in the schema records one, and inventing a number
+	// would be worse than reporting none.
 	query := `
-	SELECT 
+	SELECT
 		v.id,
 		v.title,
 		v.user_id,
@@ -107,13 +120,16 @@ func (r *AnalyticsRepository) GetVideoAnalytics(ctx context.Context, videoID uui
 		COALESCE(SUM(vv.watch_duration), 0) as total_watch_time,
 		COALESCE(AVG(vv.watch_duration), 0) as avg_watch_time,
 		COALESCE(AVG(vv.watch_percent), 0) as avg_watch_percent,
+		v.like_count,
+		(SELECT COUNT(*) FROM likes l WHERE l.video_id = v.id AND NOT l.is_like) as dislikes,
+		v.comment_count,
 		v.created_at,
 		COALESCE(MAX(vv.created_at), v.created_at) as last_viewed
 	FROM videos v
 	LEFT JOIN users u ON v.user_id = u.id
 	LEFT JOIN video_views vv ON v.id = vv.video_id
 	WHERE v.id = $1
-	GROUP BY v.id, v.title, v.user_id, u.username, v.created_at
+	GROUP BY v.id, v.title, v.user_id, u.username, v.like_count, v.comment_count, v.created_at
 	`
 
 	analytics := &domain.VideoAnalytics{
@@ -132,6 +148,9 @@ func (r *AnalyticsRepository) GetVideoAnalytics(ctx context.Context, videoID uui
 		&analytics.TotalWatchTime,
 		&analytics.AvgWatchTime,
 		&analytics.AvgWatchPercent,
+		&analytics.Likes,
+		&analytics.Dislikes,
+		&analytics.Comments,
 		&analytics.CreatedAt,
 		&analytics.LastViewed,
 	)

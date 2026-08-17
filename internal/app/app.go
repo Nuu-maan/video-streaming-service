@@ -136,7 +136,9 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	emailService := service.NewEmailService(userRepo, mail, cfg.Mail.FrontendBaseURL, cfg.Mail.PasswordResetTTL, authService, log)
 	uploadService := service.NewUploadService(videoRepo, ffmpeg, &cfg.Storage, store, log)
 	auditService := service.NewAuditService(auditRepo)
-	analyticsService := service.NewAnalyticsService(analyticsRepo, redisClient)
+	// videoRepo resolves ownership: a creator may read their own video's
+	// analytics without holding view_analytics.
+	analyticsService := service.NewAnalyticsService(analyticsRepo, videoRepo, redisClient)
 	// uploadService doubles as the VideoFileRemover: a moderator's delete_video
 	// must take the files with it, exactly as an owner's delete does.
 	moderationService := service.NewModerationService(reportRepo, videoRepo, userRepo, uploadService, auditService)
